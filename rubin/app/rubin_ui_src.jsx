@@ -517,7 +517,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
       }
       setDetectError(data.message || "Spaltenerkennung fehlgeschlagen.");
     } catch(e) {
-      setDetectError("Backend nicht erreichbar. Läuft der Server?");
+      setDetectError("Backend nicht erreichbar: " + (err.message || "Netzwerkfehler") + ". Prüfe die Verbindung in der Sidebar.");
     }
     setDetecting(false);
   };
@@ -591,7 +591,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
       setTimeout(poll, 500);
       return;
     } catch(e) {
-      setDpError("Backend nicht erreichbar. Bitte sicherstellen, dass der Server läuft.");
+      setDpError("Backend nicht erreichbar: " + (e.message || "Netzwerkfehler") + ". Prüfe die Verbindung in der Sidebar.");
       setDpRunning(false); setDpProgress(0);
     }
   };
@@ -884,7 +884,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
                       try{const r=await fetch("/api/upload",{method:"POST",body:fd});const d=await r.json();
                         if(d.status==="done"&&d.path){const nf=[...dp.evalFiles];nf[i]=d.path;setDp({...dp,evalFiles:nf})}
                         else alert("Upload fehlgeschlagen: "+(d.message||""))
-                      }catch(err){alert("Upload fehlgeschlagen: Server nicht erreichbar.")}
+                      }catch(err){alert("Upload fehlgeschlagen: " + (err.message || "Server nicht erreichbar"))}
                     }}/>
                   </label>
                   {dp.evalFiles.length > 1 && <button onClick={()=>{const nf=dp.evalFiles.filter((_,j)=>j!==i);setDp({...dp,evalFiles:nf})}} style={{border:"none",background:"none",cursor:"pointer",color:"#999",fontSize:16,marginBottom:4}}>✕</button>}
@@ -1235,7 +1235,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                     alert("Upload fehlgeschlagen: " + (data.message || "Unbekannter Fehler"));
                   }
                 } catch(e) {
-                  alert("Upload fehlgeschlagen: Server nicht erreichbar.");
+                  alert("Upload fehlgeschlagen: " + (e.message || "Server nicht erreichbar. Prüfe die Verbindung in der Sidebar."));
                 }
               };
               return (
@@ -1279,7 +1279,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                       alert("Upload fehlgeschlagen: " + (data.message || "Unbekannter Fehler"));
                     }
                   } catch(e) {
-                    alert("Upload fehlgeschlagen: Server nicht erreichbar.");
+                    alert("Upload fehlgeschlagen: " + (e.message || "Server nicht erreichbar. Prüfe die Verbindung in der Sidebar."));
                   }
                 };
                 return (
@@ -2137,7 +2137,7 @@ const PRun = ({cfg,setPg}) => {
       return;
     } catch(e) {
       if(mountedRef.current) {
-        setError("Backend nicht erreichbar. Bitte sicherstellen, dass der Server läuft.");
+        setError("Backend nicht erreichbar: " + (e.message || "Netzwerkfehler") + ". Prüfe die Verbindung in der Sidebar.");
         setRunning(false);
       }
     }
@@ -2258,6 +2258,26 @@ export default function App() {
   const [sp,setSp] = useState({lgbm:{},catboost:{}});
   const [activeBase,setActiveBase] = useState(null);
   const [activeAddons,setActiveAddons] = useState(new Set());
+  const [spFmt,setSpFmt] = useState({lgbm:{},catboost:{}});
+  const [serverOk,setServerOk] = useState(null); // null=checking, true=ok, false=error
+  const [serverError,setServerError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/health");
+        if(!r.ok) throw new Error("HTTP " + r.status);
+        const d = await r.json();
+        if(mounted) { setServerOk(true); setServerError(""); }
+      } catch(e) {
+        if(mounted) { setServerOk(false); setServerError(e.message || "Nicht erreichbar"); }
+      }
+    };
+    check();
+    const iv = setInterval(check, 15000);
+    return () => { mounted = false; clearInterval(iv); };
+  }, []);
   const [spFmt,setSpFmt] = useState({lgbm:{},catboost:{}});
   const [dp,setDp] = useState({files:[""],evalFiles:[],featurePath:"",target:"Y",treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"data/processed",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],chunksize:300000,sasEncoding:"utf-8",dpMlflow:false,dpMlflowExp:""});
   const [cfg,set] = useState({
@@ -2391,7 +2411,14 @@ export default function App() {
             <div style={{height:"100%",width:(progress*100)+"%",background:"linear-gradient(90deg,#4ade80,#22c55e)",borderRadius:2,transition:"width 0.4s"}}/>
           </div>
         </div>
-        <div style={{fontSize:10,opacity:0.25,textAlign:"center",padding:"10px 0 18px"}}>v1.0</div>
+        <div style={{fontSize:10,opacity:0.25,textAlign:"center",padding:"10px 0 6px"}}>v1.0</div>
+        <div style={{textAlign:"center",padding:"0 18px 18px"}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:10,color:serverOk===true?"rgba(74,222,128,0.7)":serverOk===false?"rgba(255,100,100,0.8)":"rgba(255,255,255,0.3)"}}>
+            <div style={{width:6,height:6,borderRadius:3,background:serverOk===true?"#4ade80":serverOk===false?"#ff6b6b":"#888"}}/>
+            {serverOk===true?"Server verbunden":serverOk===false?"Server nicht erreichbar":"Prüfe Verbindung..."}
+          </div>
+          {serverOk===false && serverError && <div style={{fontSize:9,color:"rgba(255,100,100,0.5)",marginTop:2}}>{serverError}</div>}
+        </div>
       </nav>
       <main style={{flex:1,maxWidth:960,padding:"36px 52px 80px",margin:"0 auto"}}>
         {pg==="overview" && <POverview setPg={setPg}/>}
