@@ -136,6 +136,12 @@ Ergebnis (MT, K Treatment-Arme):
         else:
             preds[va_idx] = fold_pred
 
+        # Fitted Modell sofort freigeben — EconML speichert intern
+        # Nuisance-Modelle + Cross-Fitted Residuals (~5-10 GB pro Fit).
+        del m, X_tr, X_va
+        import gc as _gc
+        _gc.collect()
+
     # Ergebnis-DataFrame bauen
     out = pd.DataFrame({"Y": Y, "T": T})
 
@@ -155,6 +161,9 @@ Ergebnis (MT, K Treatment-Arme):
             m_full = copy.deepcopy(model)
             m_full.fit(Y, T, X=X)
             train_pred = _predict_effect(m_full, X)
+            del m_full
+            import gc as _gc
+            _gc.collect()
             if is_mt:
                 for k in range(n_effects):
                     out[f"Train_{model_name}_T{k+1}"] = train_pred[:, k]
