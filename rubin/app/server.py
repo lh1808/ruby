@@ -353,6 +353,20 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
             stdout_lines = []
             stderr_lines = []
 
+            # Stderr in separatem Thread lesen um Deadlock zu vermeiden:
+            # Pipeline schreibt viel in stderr (logging, MLflow, Optuna).
+            # Wenn der 64KB-Buffer voll ist und niemand liest, blockiert
+            # der Prozess → stdout stoppt → Server wartet ewig → Deadlock.
+            def _drain_stderr():
+                try:
+                    for line in iter(proc.stderr.readline, ""):
+                        stderr_lines.append(line.rstrip())
+                except Exception:
+                    pass
+
+            stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+            stderr_thread.start()
+
             # Read stdout line by line for progress tracking
             for line in iter(proc.stdout.readline, ""):
                 stdout_lines.append(line.rstrip())
@@ -360,12 +374,8 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                 _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
 
             proc.stdout.close()
-            stderr_text = proc.stderr.read()
-            proc.stderr.close()
+            stderr_thread.join(timeout=10)  # Warte kurz auf stderr-Thread
             proc.wait(timeout=timeout)
-
-            if stderr_text:
-                stderr_lines = stderr_text.strip().split("\n")
 
             if proc.returncode == 0:
                 files = _scan_result_files()
@@ -659,3 +669,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
