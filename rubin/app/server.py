@@ -619,7 +619,7 @@ def get_report():
 
     result = {"status": "done" if report_path else "not_found"}
     if report_path:
-        result["report_url"] = f"/api/view/{report_path.relative_to(ROOT)}"
+        result["report_url"] = f"api/view/{report_path.relative_to(ROOT)}"
     if metrics:
         result["metrics"] = metrics
 
