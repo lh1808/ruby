@@ -174,18 +174,20 @@ def main():
     for lib in LIBS:
         name = lib["name"]
         cdn_tag = _build_cdn_tag(lib["cdn_url"])
+        local_tag = f'<script src="lib/{lib["local_file"]}"></script>'
         inline_pattern = _build_inline_pattern(name)
 
-        # Status pruefen: CDN-Tag vorhanden? Bereits inlined?
+        # Status pruefen: CDN-Tag, lokaler Tag oder bereits inlined?
         has_cdn_tag = cdn_tag in html
+        has_local_tag = local_tag in html
         has_inline = re.search(inline_pattern, html, re.DOTALL) is not None
 
         if has_inline and not force:
             print(f"  {name}: Bereits inlined. (--force zum Ersetzen)")
             continue
 
-        if not has_cdn_tag and not has_inline:
-            print(f"  WARNUNG: Weder CDN-Tag noch Inline-Block fuer {name} gefunden!")
+        if not has_cdn_tag and not has_local_tag and not has_inline:
+            print(f"  WARNUNG: Weder CDN-Tag noch lokaler Tag noch Inline-Block fuer {name} gefunden!")
             errors.append(name)
             continue
 
@@ -198,10 +200,12 @@ def main():
             errors.append(name)
             continue
 
-        # Ersetzen: entweder CDN-Tag oder bestehenden Inline-Block
+        # Ersetzen: CDN-Tag, lokalen Tag oder bestehenden Inline-Block
         new_tag = _build_inline_tag(name, code)
         if has_cdn_tag:
             html = html.replace(cdn_tag, new_tag)
+        elif has_local_tag:
+            html = html.replace(local_tag, new_tag)
         elif has_inline:
             html = re.sub(inline_pattern, new_tag, html, count=1, flags=re.DOTALL)
         print(f"  -> {name} inlined.\n")
