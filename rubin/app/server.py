@@ -373,14 +373,14 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                 _guarded_set(
                     status="done", message="Erfolgreich abgeschlossen.",
                     percent=100, result_files=files,
-                    stderr_tail="\n".join(stderr_lines[-20:]),
+                    stderr_tail="\n".join(stderr_lines[-50:]),
                 )
             else:
                 log.error("Task %s fehlgeschlagen (Exit %d).", task_name, proc.returncode)
                 _guarded_set(
                     status="error",
                     message=f"Fehlgeschlagen (Exit {proc.returncode})",
-                    stderr_tail="\n".join(stderr_lines[-30:]),
+                    stderr_tail="\n".join(stderr_lines[-50:]),
                 )
         except subprocess.TimeoutExpired:
             proc.kill()
