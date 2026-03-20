@@ -1508,47 +1508,7 @@ const PConfig = ({cfg,set}) => (<>
     </Row>
     {cfg.validateOn==="external" && (<>
       <Divider/>
-      <div style={{fontSize:13.5,fontWeight:600,color:C.dark,marginBottom:8}}>Evaluationsdaten (separater Datensatz)</div>
-      <Info>Lade hier den separaten Datensatz hoch, auf dem ausschließlich evaluiert wird. Die Trainingsdaten (oben) werden vollständig zum Training verwendet – kein Split.</Info>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        {[{label:"Eval X-Datei (Features)",key:"eval_x_file"},{label:"Eval T-Datei (Treatment)",key:"eval_t_file"},{label:"Eval Y-Datei (Outcome)",key:"eval_y_file"},{label:"Eval S-Datei (optional)",key:"eval_s_file"}].map(f => {
-          const uploadEvalFile = async (file) => {
-            if(!file) return;
-            const fd = new FormData();
-            fd.append("file", file);
-            try {
-              const res = await fetch("/api/upload", {method:"POST", body: fd});
-              const data = await res.json();
-              if(data.status === "done" && data.path) {
-                set({...cfg, [f.key]: data.path});
-              } else {
-                alert("Upload fehlgeschlagen: " + (data.message || "Unbekannter Fehler"));
-              }
-            } catch(e) {
-              alert("Upload fehlgeschlagen: Server nicht erreichbar.");
-            }
-          };
-          return (
-            <div key={f.key} style={{background:C.rose,borderRadius:10,padding:"14px 16px",border:"1.5px dashed "+C.border}}>
-              <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:6}}>{f.label}</div>
-              {cfg[f.key] ? (
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:12,color:C.ruby,fontFamily:"'JetBrains Mono',monospace",wordBreak:"break-all",flex:1}}>{cfg[f.key]}</span>
-                  <button onClick={()=>set({...cfg,[f.key]:""})} style={{fontSize:10,color:"#999",cursor:"pointer",border:"none",background:"none"}}>✕</button>
-                </div>
-              ) : (
-                <div>
-                  <Inp label="" value={cfg[f.key]||""} onChange={v=>set({...cfg,[f.key]:v})} placeholder="Pfad oder hochladen"/>
-                  <label style={{display:"inline-block",marginTop:6,fontSize:11,color:C.ruby,cursor:"pointer",fontWeight:600}}>
-                    Datei wählen
-                    <input type="file" accept=".csv,.parquet,.sas7bdat" style={{display:"none"}} onChange={e=>uploadEvalFile(e.target.files[0])}/>
-                  </label>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <Info>Evaluationsdaten werden auf der Seite <strong>Daten &amp; Vorlage</strong> angegeben.{cfg.eval_x_file ? ` Aktuell: ${cfg.eval_x_file.split("/").pop()}` : " Noch keine Eval-Dateien konfiguriert."}</Info>
     </>)}
     <Divider/>
     <Toggle label="Memory-Reduktion" checked={cfg.reduceMem!==false} onChange={v=>set({...cfg,reduceMem:v})} help="Datentypen automatisch downcasten: float64 → float32, int64 → int16/int32 etc. Spart ca. 40–60% Arbeitsspeicher bei minimalem Präzisionsverlust (7 statt 15 Dezimalstellen)."/>
