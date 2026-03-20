@@ -1888,13 +1888,8 @@ const buildYaml = (cfg) => {
   if(Object.keys(fmtF).length > 0) a(`  fixed_params: ${jsonInline(fmtF)}`);
   a("");
   const fracs = {s_learner_frac:cfg.fracSL,t_learner_group_frac:cfg.fracTL,x_learner_group_frac:cfg.fracXL,dml_frac:cfg.fracDML,dr_learner_frac:cfg.fracDR};
-  const hasCustomFrac = Object.values(fracs).some(v=>v!==undefined && v!==1);
   a("learner_data_usage:");
-  if(hasCustomFrac) {
-    Object.entries(fracs).forEach(([k,v]) => a(`  ${k}: ${v!==undefined?v:1.0}`));
-  } else {
-    a("  # alle auf 1.0 (Default)");
-  }
+  Object.entries(fracs).forEach(([k,v]) => a(`  ${k}: ${v!==undefined?v:1.0}`));
   a("");
   a("shap_values:");
   a(`  calculate_shap_values: ${!!cfg.explEnabled}`);
