@@ -2474,6 +2474,17 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 
 </script>
 
+<script>
+// ── Diagnostik: Hilft bei der Fehlersuche wenn die App nicht lädt ──
+(function() {
+  var ok = true;
+  if (typeof React === 'undefined') { console.error('[rubin] React nicht geladen!'); ok = false; }
+  if (typeof ReactDOM === 'undefined') { console.error('[rubin] ReactDOM nicht geladen!'); ok = false; }
+  if (ok) console.log('[rubin] React ' + React.version + ' geladen, Babel kompiliert.');
+  window._rubinDiag = { react: typeof React !== 'undefined', reactDOM: typeof ReactDOM !== 'undefined', ok: ok };
+})();
+</script>
+
 <noscript>
   <div style="padding:40px;text-align:center;font-family:system-ui,sans-serif;">
     <h1>JavaScript erforderlich</h1>
