@@ -29,6 +29,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -328,56 +329,135 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
         stdout_tail="", stderr_tail="", result_files=[], pid=None,
     )
 
+    _last_disk_write = [0.0]  # Timestamp des letzten Disk-Writes
+
     def _guarded_set(**kw):
-        """Setzt State nur wenn diese Task-Generation noch aktuell ist."""
+        """Setzt State nur wenn diese Task-Generation noch aktuell ist.
+        Schreibt nur alle 0.5 Sekunden auf Disk (Throttle), um I/O-Overhead
+        zu vermeiden wenn LightGBM/Optuna hunderte Zeilen/Sekunde auf stdout schreibt."""
+        now = time.time()
+        force_write = kw.get("status") in ("done", "error")
         with _state_lock:
             if _state["generation"] != gen:
-                return  # Abgebrochen oder neuer Task gestartet
+                return
             _state.update(kw)
-            try:
-                PROGRESS_FILE.write_text(json.dumps(_state, default=str), encoding="utf-8")
-            except Exception:
-                pass
+            # Disk-Write nur bei Status-Änderung oder alle 0.5 Sekunden
+            if force_write or (now - _last_disk_write[0]) >= 0.5:
+                _last_disk_write[0] = now
+                try:
+                    PROGRESS_FILE.write_text(json.dumps(_state, default=str), encoding="utf-8")
+                except Exception:
+                    pass
 
     def _worker():
         try:
+            import select
+
+            # start_new_session=True → Eigene Prozessgruppe.
+            # os.killpg() beendet auch alle Kind-Prozesse
+            # (LightGBM n_jobs=-1, joblib Worker, OpenMP Threads).
+            #
+            # PERFORMANCE: KEIN PYTHONUNBUFFERED!
+            # Die Pipeline nutzt print(flush=True) für [rubin]-Progress-Zeilen.
+            # LightGBM-Output (~500 Zeilen/s) wird vom Python-Buffer gesammelt
+            # und in Batches geschrieben → dramatisch weniger Pipe-Syscalls.
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
                 cwd=str(ROOT),
-                env={**os.environ, "PYTHONPATH": str(ROOT), "PYTHONUNBUFFERED": "1"},
+                env={**os.environ, "PYTHONPATH": str(ROOT)},
+                start_new_session=True,
             )
             _guarded_set(pid=proc.pid)
 
             stdout_lines = []
             stderr_lines = []
 
-            # Stderr in separatem Thread lesen um Deadlock zu vermeiden:
-            # Pipeline schreibt viel in stderr (logging, MLflow, Optuna).
-            # Wenn der 64KB-Buffer voll ist und niemand liest, blockiert
-            # der Prozess → stdout stoppt → Server wartet ewig → Deadlock.
             def _drain_stderr():
                 try:
                     for line in iter(proc.stderr.readline, ""):
                         stderr_lines.append(line.rstrip())
+                        if len(stderr_lines) > 300:
+                            stderr_lines[:] = stderr_lines[-200:]
                 except Exception:
                     pass
 
             stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
             stderr_thread.start()
 
-            # Read stdout line by line for progress tracking
-            for line in iter(proc.stdout.readline, ""):
-                stdout_lines.append(line.rstrip())
-                _parse_progress(line, stdout_lines, _guarded_set)
-                _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
+            # PERFORMANCE-OPTIMIERTES Stdout-Lesen:
+            # - select() mit 2s Timeout für Alive-Check
+            # - Batch-Read: Alle verfügbaren Zeilen auf einmal lesen
+            # - Nur [rubin]-Zeilen → Progress-Update (1-2 pro Step)
+            # - stdout_tail: max alle 2 Sekunden aktualisieren
+            stdout_fd = proc.stdout.fileno()
+            _last_tail_update = 0.0
 
-            proc.stdout.close()
-            stderr_thread.join(timeout=10)  # Warte kurz auf stderr-Thread
-            proc.wait(timeout=timeout)
+            while True:
+                ready, _, _ = select.select([stdout_fd], [], [], 2.0)
+                if ready:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    stripped = line.rstrip()
+                    stdout_lines.append(stripped)
 
-            if proc.returncode == 0:
+                    # Nur [rubin]-Zeilen als Progress verarbeiten
+                    if "[rubin]" in stripped:
+                        _parse_progress(line, stdout_lines, _guarded_set)
+
+                    # Batch: Weitere wartende Zeilen sofort lesen (non-blocking)
+                    while True:
+                        more, _, _ = select.select([stdout_fd], [], [], 0)
+                        if not more:
+                            break
+                        line = proc.stdout.readline()
+                        if not line:
+                            break
+                        stripped = line.rstrip()
+                        stdout_lines.append(stripped)
+                        if "[rubin]" in stripped:
+                            _parse_progress(line, stdout_lines, _guarded_set)
+
+                    # stdout_lines begrenzen + tail nur alle 2s updaten
+                    if len(stdout_lines) > 100:
+                        stdout_lines[:] = stdout_lines[-50:]
+                    now = time.time()
+                    if now - _last_tail_update >= 2.0:
+                        _last_tail_update = now
+                        _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
+                else:
+                    ret = proc.poll()
+                    if ret is not None:
+                        log.info("Task %s: Prozess beendet (rc=%d), breche stdout-Read ab.", task_name, ret)
+                        break
+
+            # Alle Kindprozesse der Prozessgruppe beenden
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                pass
+
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            stderr_thread.join(timeout=5)
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
+
+            rc = proc.poll()
+            if rc is None:
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                rc = proc.returncode or -9
+
+            if rc == 0:
                 files = _scan_result_files()
                 log.info("Task %s erfolgreich abgeschlossen (%d Ergebnis-Dateien).", task_name, len(files))
                 _guarded_set(
@@ -386,14 +466,17 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                     stderr_tail="\n".join(stderr_lines[-50:]),
                 )
             else:
-                log.error("Task %s fehlgeschlagen (Exit %d).", task_name, proc.returncode)
+                log.error("Task %s fehlgeschlagen (Exit %d).", task_name, rc)
                 _guarded_set(
                     status="error",
-                    message=f"Fehlgeschlagen (Exit {proc.returncode})",
+                    message=f"Fehlgeschlagen (Exit {rc})",
                     stderr_tail="\n".join(stderr_lines[-50:]),
                 )
         except subprocess.TimeoutExpired:
-            proc.kill()
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                proc.kill()
             log.error("Task %s: Timeout nach %ds.", task_name, timeout)
             _guarded_set(status="error", message=f"Timeout nach {timeout}s.")
         except Exception as e:
@@ -404,38 +487,53 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
     thread.start()
 
 
-def _parse_progress(line: str, all_lines: list[str], state_setter=None):
-    """Parst Pipeline-Fortschritt aus stdout-Zeilen."""
-    _update = state_setter or _set_state
-    line_lower = line.lower().strip()
+# Pre-compiled regex for progress parsing (avoid re.search per call)
+_RE_STEP = re.compile(r"Step\s+(\d+)/(\d+):\s*(.*)")
+_RE_PERCENT = re.compile(r"(\d+)%")
 
-    # rubin pipeline prints step markers like:
+
+def _parse_progress(line: str, all_lines: list[str], state_setter=None):
+    """Parst Pipeline-Fortschritt aus [rubin]-stdout-Zeilen."""
+    _update = state_setter or _set_state
+
     # [rubin] Step 3/8: Training & Cross-Predictions
+    m = _RE_STEP.search(line)
+    if m:
+        idx, total, step_name = m.group(1), m.group(2), m.group(3).strip()
+        _update(
+            step=step_name, step_index=int(idx), total_steps=int(total),
+            percent=int(100 * int(idx) / int(total)),
+            message=f"Schritt {idx}/{total}: {step_name}",
+        )
+        return
+
     # [rubin] Progress: 45%
-    if "[rubin]" in line and "step" in line_lower:
-        parts = line.split("Step")[-1].strip() if "Step" in line else ""
-        if "/" in parts:
-            try:
-                current_total = parts.split(":")[0].strip()
-                idx, total = current_total.split("/")
-                step_name = parts.split(":", 1)[-1].strip() if ":" in parts else ""
-                _update(
-                    step=step_name, step_index=int(idx), total_steps=int(total),
-                    percent=int(100 * int(idx) / int(total)),
-                    message=f"Schritt {idx}/{total}: {step_name}",
-                )
-            except Exception:
-                pass
-    elif "progress:" in line_lower or "%" in line:
-        try:
-            m = re.search(r"(\d+)%", line)
-            if m:
-                _update(percent=int(m.group(1)))
-        except Exception:
-            pass
-    # Generic step detection
-    elif any(kw in line_lower for kw in ["loading", "training", "tuning", "evaluation", "shap", "surrogate", "bundle", "report"]):
-        _update(message=line.strip()[:120])
+    m = _RE_PERCENT.search(line)
+    if m:
+        _update(percent=int(m.group(1)))
+
+
+def _find_analysis_python() -> str:
+    """Findet den Python-Interpreter für Analyse-Subprozesse.
+
+    Bevorzugt das pixi-Default-Environment (hat alle Analyse-Dependencies),
+    fällt auf sys.executable (app-env) zurück.
+    """
+    # 1. pixi default-Environment (hat alle Analyse-Dependencies)
+    default_python = ROOT / ".pixi" / "envs" / "default" / "bin" / "python"
+    if default_python.exists():
+        log.info("Analyse-Python: %s (pixi default-env)", default_python)
+        return str(default_python)
+
+    # 2. pixi ohne benanntes Environment
+    pixi_python = ROOT / ".pixi" / "env" / "bin" / "python"
+    if pixi_python.exists():
+        log.info("Analyse-Python: %s (pixi env)", pixi_python)
+        return str(pixi_python)
+
+    # 3. Fallback: gleiches Python wie der Server
+    log.info("Analyse-Python: %s (sys.executable fallback)", sys.executable)
+    return sys.executable
 
 
 @app.route("/api/run-analysis", methods=["POST"])
@@ -452,7 +550,8 @@ def run_analysis():
     config_path.write_text(yaml_text, encoding="utf-8")
     log.info("Analyse-Konfiguration geschrieben: %s", config_path)
 
-    cmd = [sys.executable, str(ROOT / "run_analysis.py"), "--config", str(config_path)]
+    python = _find_analysis_python()
+    cmd = [python, str(ROOT / "run_analysis.py"), "--config", str(config_path)]
     _run_in_background("run_analysis", cmd)
 
     return jsonify({"status": "started", "message": "Analyse gestartet."})
@@ -472,7 +571,8 @@ def run_dataprep():
     config_path.write_text(yaml_text, encoding="utf-8")
     log.info("DataPrep-Konfiguration geschrieben: %s", config_path)
 
-    cmd = [sys.executable, str(ROOT / "run_dataprep.py"), "--config", str(config_path)]
+    python = _find_analysis_python()
+    cmd = [python, str(ROOT / "run_dataprep.py"), "--config", str(config_path)]
     _run_in_background("run_dataprep", cmd, timeout=1800)
 
     return jsonify({"status": "started", "message": "Datenvorbereitung gestartet."})
