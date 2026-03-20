@@ -492,9 +492,10 @@ class BaseLearnerTuner:
         return np.unique(np.concatenate(idx_sets)).astype(int)
 
     def _prepare_task_frame(self, task: TuningTask, X: pd.DataFrame, T: np.ndarray, indices: np.ndarray) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray]:
-        X_sub = X.iloc[indices].copy()
+        X_sub = X.iloc[indices]  # View, keine Kopie — to_numpy() in _tune_task erstellt Kopie
         T_sub = np.asarray(T)[indices].astype(int)
         if task.uses_treatment_feature:
+            X_sub = X_sub.copy()  # Kopie nur wenn wir mutieren müssen
             X_sub["__treatment__"] = T_sub
         return X_sub, indices.astype(int), T_sub
 
