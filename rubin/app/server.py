@@ -484,7 +484,21 @@ def run_dataprep():
 
 @app.route("/api/progress")
 def get_progress():
-    return jsonify(_get_state())
+    state = _get_state()
+    # Erkennung von OOM-gekilten oder anderweitig verschwundenen Prozessen
+    if state.get("status") == "running" and state.get("pid"):
+        try:
+            os.kill(state["pid"], 0)  # Prüft ob Prozess existiert (sendet kein Signal)
+        except ProcessLookupError:
+            log.error("Prozess %d ist verschwunden (vermutlich OOM-Kill). Status wird auf error gesetzt.", state["pid"])
+            _set_state(
+                status="error",
+                message="Prozess wurde unerwartet beendet (vermutlich Out-of-Memory). "
+                        "Versuche weniger Daten (df_frac), weniger Modelle oder mehr RAM.",
+                pid=None,
+            )
+            state = _get_state()
+    return jsonify(state)
 
 
 @app.route("/api/reset", methods=["POST"])
@@ -669,4 +683,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
