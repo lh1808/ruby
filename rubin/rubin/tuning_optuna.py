@@ -26,7 +26,19 @@ def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int):
     if labels_arr.ndim != 1:
         labels_arr = labels_arr.reshape(-1)
     if len(labels_arr) < 2:
-        raise ValueError("Für die Aufteilung werden mindestens 2 Beobachtungen benötigt.")
+        import logging
+        log = logging.getLogger("rubin.tuning")
+        log.error(
+            "Tuning-Split fehlgeschlagen: target hat nur %d Element(e). "
+            "dtype=%s, unique=%s, shape=%s. "
+            "Prüfe ob X/T/Y gleich viele Zeilen haben und ob df_frac aktiv ist.",
+            len(labels_arr), labels_arr.dtype, np.unique(labels_arr).tolist(), labels_arr.shape,
+        )
+        raise ValueError(
+            f"Für die Aufteilung werden mindestens 2 Beobachtungen benötigt "
+            f"(erhalten: {len(labels_arr)}, unique={np.unique(labels_arr).tolist()}, "
+            f"dtype={labels_arr.dtype})."
+        )
 
     counts = pd.Series(labels_arr).value_counts(dropna=False)
     effective_splits = min(int(n_splits), len(labels_arr))
@@ -601,6 +613,16 @@ class BaseLearnerTuner:
         X_mat = X_task.to_numpy()
         fixed_defaults = dict(self.cfg.base_learner.fixed_params or {})
 
+        import logging
+        _tlog = logging.getLogger("rubin.tuning")
+        _tlog.info(
+            "Tuning-Task '%s': X_input=%d rows, indices=%d, X_task=%s, target=%s (unique=%s), "
+            "T_task unique=%s, cv_splits=%d, target_name=%s, objective=%s",
+            task.key, len(X), len(indices), X_mat.shape, target.shape,
+            np.unique(target).tolist(), np.unique(T_task).tolist(),
+            self.cfg.tuning.cv_splits, task.target_name, task.objective_family,
+        )
+
         study = self._create_study(task.key)
 
         def objective(trial):
@@ -631,6 +653,16 @@ class BaseLearnerTuner:
     def tune_all(self, model_names: List[str], X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> Dict[str, Dict[str, Dict[str, Any]]]:
         if not self.cfg.tuning.enabled:
             return {}
+
+        import logging
+        _tlog = logging.getLogger("rubin.tuning")
+        _tlog.info(
+            "tune_all gestartet: models=%s, X=%s, Y=%s (unique=%s), T=%s (unique=%s), "
+            "cv_splits=%d, n_trials=%d",
+            model_names, X.shape, np.asarray(Y).shape, np.unique(Y).tolist(),
+            np.asarray(T).shape, np.unique(T).tolist(),
+            self.cfg.tuning.cv_splits, self.cfg.tuning.n_trials,
+        )
 
         if any((m or "").lower() == "causalforestdml" for m in model_names):
             # Hinweis: CausalForestDML-Waldparameter werden über EconML tune() bestimmt,
