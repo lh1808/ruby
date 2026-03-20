@@ -25,6 +25,9 @@ def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int):
     labels_arr = np.asarray(labels)
     if labels_arr.ndim != 1:
         labels_arr = labels_arr.reshape(-1)
+
+    # Safety: Mindestens 2 Folds für Cross-Validation
+    n_splits = max(2, int(n_splits))
     if len(labels_arr) < 2:
         import logging
         log = logging.getLogger("rubin.tuning")
@@ -51,7 +54,18 @@ def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int):
 
     fallback_splits = min(int(n_splits), len(labels_arr))
     if fallback_splits < 2:
-        raise ValueError("Für die Aufteilung werden mindestens 2 Beobachtungen benötigt.")
+        import logging
+        log = logging.getLogger("rubin.tuning")
+        log.error(
+            "Tuning-Split Fallback fehlgeschlagen: n_splits=%d, len=%d, unique=%s, counts=%s",
+            n_splits, len(labels_arr), np.unique(labels_arr).tolist(),
+            dict(pd.Series(labels_arr).value_counts(dropna=False)),
+        )
+        raise ValueError(
+            f"Für die Aufteilung werden mindestens 2 Folds benötigt "
+            f"(n_splits={n_splits}, len={len(labels_arr)}, "
+            f"unique={np.unique(labels_arr).tolist()})."
+        )
     cv = KFold(n_splits=fallback_splits, shuffle=True, random_state=seed)
     return cv.split(np.zeros(len(labels_arr)))
 
@@ -501,10 +515,21 @@ class BaseLearnerTuner:
         model.fit(X_train, y_train)
         return model
 
+    def _cv_splits(self, labels: np.ndarray, single_fold: bool = False):
+        """Erzeugt CV-Splits. Bei single_fold=True wird nur der erste Fold verwendet."""
+        splits = _iter_stratified_or_kfold(labels, n_splits=self.cfg.tuning.cv_splits, seed=self.seed)
+        if single_fold:
+            # Nur den ersten Split zurückgeben (schneller, etwas verrauschter)
+            for tr, va in splits:
+                yield tr, va
+                return
+        else:
+            yield from splits
+
     def _objective_all_classification(self, params: Dict[str, Any], X_mat: np.ndarray, target: np.ndarray) -> float:
         scores: List[float] = []
         is_multiclass = len(np.unique(target)) > 2
-        for tr, va in _iter_stratified_or_kfold(target.astype(int), n_splits=self.cfg.tuning.cv_splits, seed=self.seed):
+        for tr, va in self._cv_splits(target.astype(int), single_fold=self.cfg.tuning.single_fold):
             model = self._fit_model(params, X_mat[tr], target[tr].astype(int), "classifier")
             if is_multiclass:
                 proba = model.predict_proba(X_mat[va])
@@ -518,7 +543,7 @@ class BaseLearnerTuner:
         scores: List[float] = []
         K = len(np.unique(T))
         strat_labels = np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int)
-        for tr, va in _iter_stratified_or_kfold(strat_labels, n_splits=self.cfg.tuning.cv_splits, seed=self.seed):
+        for tr, va in self._cv_splits(strat_labels, single_fold=self.cfg.tuning.single_fold):
             fold_scores: List[float] = []
             for group in range(K):
                 tr_mask = T[tr] == group
@@ -577,7 +602,7 @@ class BaseLearnerTuner:
         scores: List[float] = []
         strat_labels = np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int)
 
-        for tr, va in _iter_stratified_or_kfold(strat_labels, n_splits=self.cfg.tuning.cv_splits, seed=self.seed):
+        for tr, va in self._cv_splits(strat_labels, single_fold=self.cfg.tuning.single_fold):
             fold_scores: List[float] = []
             for group in (0, 1):
                 tr_mask = T[tr] == group
