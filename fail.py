@@ -1,236 +1,62 @@
-#!/usr/bin/env python3
-"""Bettet React, ReactDOM und Babel direkt in app/frontend/index.html ein.
+[rubin] React 18.2.0 geladen, Babel kompiliert.
+8501/:332  You are using the in-browser Babel transformer. Be sure to precompile your scripts for production - https://babeljs.io/docs/setup/
+(anonymous) @ 8501/:332
+8501/:332  Uncaught SyntaxError: /Inline Babel script: Identifier 'spFmt' has already been declared. (2282:9)
 
-Danach funktioniert die rubin Web-App komplett ohne Internetzugang.
-
-Ablauf:
-    1. Prueft app/frontend/lib/ auf lokale Kopien der Libraries
-    2. Falls nicht lokal vorhanden: versucht 3 CDN-Quellen (cloudflare, unpkg, jsdelivr)
-    3. Ersetzt die <script src="..."> Tags durch inline <script>...</script>
-
-Ausfuehrung:
-    python scripts/build_app_html.py          # normal
-    python scripts/build_app_html.py --force  # auch bereits inlinete ersetzen
-
-Manueller Fallback (kein Internet vorhanden):
-    1. Auf einem Rechner MIT Internet diese 3 Dateien herunterladen:
-
-       https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js
-         -> speichern als: app/frontend/lib/react.min.js
-
-       https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js
-         -> speichern als: app/frontend/lib/react-dom.min.js
-
-       https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js
-         -> speichern als: app/frontend/lib/babel.min.js
-
-    2. Die 3 Dateien auf den Server kopieren (USB, SCP, etc.)
-    3. Ausfuehren: python scripts/build_app_html.py
-"""
-
-from __future__ import annotations
-
-import os
-import re
-import sys
-import urllib.request
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-INDEX = ROOT / "app" / "frontend" / "index.html"
-LIB_DIR = ROOT / "app" / "frontend" / "lib"
-
-# ── Library-Definitionen ──
-# cdn_url:    Original-URL (steht im HTML als <script src="...">)
-# local_file: Dateiname fuer lokale Kopie in app/frontend/lib/
-# alt_urls:   Alternative CDN-Quellen
-LIBS = [
-    {
-        "name": "react",
-        "cdn_url": "https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js",
-        "local_file": "react.min.js",
-        "alt_urls": [
-            "https://unpkg.com/react@18.2.0/umd/react.production.min.js",
-            "https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js",
-        ],
-        "min_size": 5_000,  # React production.min.js ist ~10 KB
-    },
-    {
-        "name": "react-dom",
-        "cdn_url": "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js",
-        "local_file": "react-dom.min.js",
-        "alt_urls": [
-            "https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js",
-            "https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js",
-        ],
-        "min_size": 100_000,  # ReactDOM production.min.js ist ~130 KB
-    },
-    {
-        "name": "babel",
-        "cdn_url": "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js",
-        "local_file": "babel.min.js",
-        "alt_urls": [
-            "https://unpkg.com/@babel/standalone@7.23.9/babel.min.js",
-            "https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.9/babel.min.js",
-        ],
-        "min_size": 500_000,  # Babel standalone ist ~1.8 MB
-    },
-]
-
-
-def _try_download(url: str, timeout: int = 20) -> str | None:
-    """Versucht eine URL herunterzuladen."""
-    try:
-        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        if proxy:
-            handler = urllib.request.ProxyHandler({"https": proxy, "http": proxy})
-            opener = urllib.request.build_opener(handler)
-        else:
-            opener = urllib.request.build_opener()
-        req = urllib.request.Request(url, headers={"User-Agent": "rubin-build/1.0"})
-        with opener.open(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8")
-    except Exception:
-        return None
-
-
-def _read_local(path: Path, min_size: int) -> str | None:
-    """Liest eine lokale Datei. Gibt None zurueck wenn zu klein/fehlerhaft."""
-    if not path.exists():
-        return None
-    try:
-        data = path.read_text(encoding="utf-8")
-        if len(data) >= min_size:
-            return data
-        print(f"    WARNUNG: {path.name} ist nur {len(data):,} bytes (erwartet >= {min_size:,})")
-        return None
-    except Exception as e:
-        print(f"    WARNUNG: {path.name} nicht lesbar: {e}")
-        return None
-
-
-def fetch_lib(lib: dict) -> str | None:
-    """Laedt Library-Code: erst lokal, dann CDN-URLs."""
-    name = lib["name"]
-    min_size = lib["min_size"]
-    local = LIB_DIR / lib["local_file"]
-
-    # 1. Lokale Datei
-    data = _read_local(local, min_size)
-    if data:
-        print(f"  {name}: Lokale Datei verwendet ({len(data):,} bytes)")
-        return data
-
-    # 2. Alle CDN-URLs durchprobieren
-    all_urls = [lib["cdn_url"]] + lib.get("alt_urls", [])
-    for url in all_urls:
-        domain = url.split("/")[2]
-        print(f"  {name}: Versuche {domain} ...", end=" ", flush=True)
-        data = _try_download(url)
-        if data and len(data) >= min_size:
-            print(f"OK ({len(data):,} bytes)")
-            # Lokal speichern fuer naechstes Mal
-            LIB_DIR.mkdir(parents=True, exist_ok=True)
-            local.write_text(data, encoding="utf-8")
-            print(f"    Gespeichert: {local}")
-            return data
-        elif data:
-            print(f"WARNUNG: Antwort zu klein ({len(data)} bytes)")
-        else:
-            print("FEHLER")
-
-    return None
-
-
-def _build_cdn_tag(url: str) -> str:
-    return f'<script src="{url}"></script>'
-
-
-def _build_inline_tag(name: str, code: str) -> str:
-    return f"<!-- {name} (inlined) -->\n<script>{code}</script>"
-
-
-def _build_inline_pattern(name: str) -> str:
-    """Regex-Pattern das einen bereits inlineten Block matcht."""
-    return rf"<!-- {re.escape(name)} \(inlined\) -->\n<script>.*?</script>"
-
-
-def main():
-    force = "--force" in sys.argv
-
-    print("[build_app_html] CDN-Libraries inlinen ...")
-    if force:
-        print("  (--force: Bereits inlinete Libraries werden ersetzt)")
-    print()
-
-    if not INDEX.exists():
-        sys.exit(f"FEHLER: index.html nicht gefunden: {INDEX}")
-
-    html = INDEX.read_text(encoding="utf-8")
-    print(f"  Gelesen: {INDEX} ({len(html):,} bytes)")
-    print()
-
-    errors = []
-    for lib in LIBS:
-        name = lib["name"]
-        cdn_tag = _build_cdn_tag(lib["cdn_url"])
-        local_tag = f'<script src="lib/{lib["local_file"]}"></script>'
-        inline_pattern = _build_inline_pattern(name)
-
-        # Status pruefen: CDN-Tag, lokaler Tag oder bereits inlined?
-        has_cdn_tag = cdn_tag in html
-        has_local_tag = local_tag in html
-        has_inline = re.search(inline_pattern, html, re.DOTALL) is not None
-
-        if has_inline and not force:
-            print(f"  {name}: Bereits inlined. (--force zum Ersetzen)")
-            continue
-
-        if not has_cdn_tag and not has_local_tag and not has_inline:
-            print(f"  WARNUNG: Weder CDN-Tag noch lokaler Tag noch Inline-Block fuer {name} gefunden!")
-            errors.append(name)
-            continue
-
-        # Library laden
-        code = fetch_lib(lib)
-        if not code:
-            print(f"  FEHLER: {name} nicht verfuegbar!")
-            print(f"    Lokale Datei erwartet: {LIB_DIR / lib['local_file']}")
-            print(f"    Download: {lib['cdn_url']}")
-            errors.append(name)
-            continue
-
-        # Ersetzen: CDN-Tag, lokalen Tag oder bestehenden Inline-Block
-        new_tag = _build_inline_tag(name, code)
-        if has_cdn_tag:
-            html = html.replace(cdn_tag, new_tag)
-        elif has_local_tag:
-            html = html.replace(local_tag, new_tag)
-        elif has_inline:
-            html = re.sub(inline_pattern, new_tag, html, count=1, flags=re.DOTALL)
-        print(f"  -> {name} inlined.\n")
-
-    if errors:
-        print()
-        print(f"  FEHLER: {len(errors)} Library(s) fehlen: {', '.join(errors)}")
-        print()
-        print("  Manueller Fallback:")
-        print(f"    mkdir -p {LIB_DIR}")
-        for lib in LIBS:
-            if lib["name"] in errors:
-                print(f"    # {lib['name']}:")
-                print(f"    #   Download: {lib['cdn_url']}")
-                print(f"    #   Speichern: {LIB_DIR / lib['local_file']}")
-        print()
-        print("  Dann erneut: python scripts/build_app_html.py")
-        sys.exit(1)
-
-    INDEX.write_text(html, encoding="utf-8")
-    size_kb = len(html) / 1024
-    print()
-    print(f"  Geschrieben: {INDEX} ({size_kb:.0f} KB)")
-    print("[build_app_html] Fertig.")
-
-
-if __name__ == "__main__":
-    main()
+  2280 |     return () => { mounted = false; clearInterval(iv); };
+  2281 |   }, []);
+> 2282 |   const [spFmt,setSpFmt] = useState({lgbm:{},catboost:{}});
+       |          ^
+  2283 |   const [dp,setDp] = useState({files:[""],evalFiles:[],featurePath:"",target:"Y",treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"data/processed",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],chunksize:300000,sasEncoding:"utf-8",dpMlflow:false,dpMlflowExp:""});
+  2284 |   const [cfg,set] = useState({
+  2285 |     expName:"rubin",seed:42,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,testSize:0.2,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,
+    at e (8501/:332:427854)
+    at r.raise (8501/:332:465828)
+    at t.checkRedeclarationInScope (8501/:332:438397)
+    at t.declareName (8501/:332:437761)
+    at r.declareName (8501/:332:440569)
+    at r.declareNameFromIdentifier (8501/:332:495889)
+    at r.checkIdentifier (8501/:332:495804)
+    at r.checkLVal (8501/:332:495398)
+    at r.checkLVal (8501/:332:495213)
+    at r.parseVarId (8501/:332:681540)
+    at r.parseVarId (8501/:332:555835)
+    at r.parseVar (8501/:332:680971)
+    at r.parseVarStatement (8501/:332:677326)
+    at r.parseStatementContent (8501/:332:668999)
+    at r.parseStatementLike (8501/:332:667179)
+    at r.parseStatementLike (8501/:332:542997)
+    at r.parseStatementListItem (8501/:332:666755)
+    at r.parseBlockOrModuleBlockBody (8501/:332:679464)
+    at r.parseBlockBody (8501/:332:679274)
+    at r.parseBlock (8501/:332:678972)
+    at r.parseFunctionBody (8501/:332:655968)
+    at r.parseFunctionBody (8501/:332:542304)
+    at r.parseFunctionBodyAndFinish (8501/:332:655596)
+    at r.parseFunctionBodyAndFinish (8501/:332:542631)
+    at 8501/:332:682237
+    at r.withSmartMixTopicForbiddingContext (8501/:332:661363)
+    at r.parseFunction (8501/:332:682188)
+    at r.parseFunctionStatement (8501/:332:674953)
+    at r.parseStatementContent (8501/:332:667757)
+    at r.parseStatementLike (8501/:332:667179)
+    at r.parseStatementLike (8501/:332:542997)
+    at r.parseModuleItem (8501/:332:666674)
+    at r.parseBlockOrModuleBlockBody (8501/:332:679441)
+    at r.parseBlockBody (8501/:332:679274)
+    at r.parseProgram (8501/:332:664657)
+    at r.parseTopLevel (8501/:332:663380)
+    at r.parseTopLevel (8501/:332:561443)
+    at r.parse (8501/:332:704066)
+    at hE (8501/:332:704257)
+    at 8501/:332:1130775
+    at p (8501/:332:2224)
+    at Generator.<anonymous> (8501/:332:3574)
+    at Generator.next (8501/:332:2653)
+    at p (8501/:332:2224)
+    at A (8501/:332:4004)
+    at Generator.<anonymous> (8501/:332:3351)
+    at Generator.next (8501/:332:2653)
+    at p (8501/:332:2224)
+    at A (8501/:332:4004)
+    at Generator.<anonymous> (8501/:332:3351)
