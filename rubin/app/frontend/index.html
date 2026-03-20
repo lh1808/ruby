@@ -2311,7 +2311,6 @@ function App() {
     const iv = setInterval(check, 15000);
     return () => { mounted = false; clearInterval(iv); };
   }, []);
-  const [spFmt,setSpFmt] = useState({lgbm:{},catboost:{}});
   const [dp,setDp] = useState({files:[""],evalFiles:[],featurePath:"",target:"Y",treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"data/processed",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],chunksize:300000,sasEncoding:"utf-8",dpMlflow:false,dpMlflowExp:""});
   const [cfg,set] = useState({
     expName:"rubin",seed:42,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,testSize:0.2,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,
@@ -2475,7 +2474,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 
 <script>
-// ── Diagnostik: Hilft bei der Fehlersuche wenn die App nicht lädt ──
 (function() {
   var ok = true;
   if (typeof React === 'undefined') { console.error('[rubin] React nicht geladen!'); ok = false; }
@@ -2492,7 +2490,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
   </div>
 </noscript>
 <script>
-// Fallback: zeige Hinweis wenn React nicht geladen werden konnte
 window.addEventListener("DOMContentLoaded", function() {
   setTimeout(function() {
     var root = document.getElementById("root");
@@ -2504,7 +2501,6 @@ window.addEventListener("DOMContentLoaded", function() {
         '<p style="font-weight:700;margin-bottom:8px;">Loesung: Einmalig auf einem Rechner mit Internet ausfuehren:</p>' +
         '<code style="display:block;background:#fff;padding:12px;border-radius:6px;margin:8px 0;font-size:13px;">python scripts/build_app_html.py</code>' +
         '<p style="font-size:13px;margin-top:8px;">Oder: <code>pixi run build-app</code></p>' +
-        '<p style="font-size:12px;color:#999;margin-top:12px;">Das Skript laedt React, ReactDOM und Babel herunter und bettet sie direkt in die HTML-Datei ein.</p>' +
         '</div></div>';
     }
   }, 3000);
