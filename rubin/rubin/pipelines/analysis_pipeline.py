@@ -18,6 +18,7 @@ Der Bundle-Export ist deshalb bewusst am Ende des Analyselaufs angesiedelt."""
 
 from dataclasses import dataclass
 import copy
+import gc
 import tempfile
 import time
 from typing import Any, Dict, Optional
@@ -424,6 +425,7 @@ class AnalysisPipeline:
             preds[name] = df_pred
             models[name] = current_model
             _log_temp_artifact(mlflow, lambda p, _df=df_pred: _df.to_csv(p, index=False), f"predictions_{name}.csv")
+            gc.collect()  # Zwischen Modellen: deepcopy-Reste und Fold-Daten freigeben
 
         return models, preds
 
@@ -1155,7 +1157,14 @@ class AnalysisPipeline:
 
             _progress("Daten laden & Preprocessing")
             X, T, Y, S = self._load_inputs()
-            X_full, T_full, Y_full = X.copy(), np.asarray(T).copy(), np.asarray(Y).copy()
+
+            # X_full/T_full/Y_full werden nur für Bundle-Refit benötigt.
+            # Kopie erst erstellen wenn nötig, spart ~2 GB bei normalen Läufen.
+            _bundle_enabled = getattr(cfg, "bundle", None) and cfg.bundle.enabled
+            if _bundle_enabled:
+                X_full, T_full, Y_full = X.copy(), np.asarray(T).copy(), np.asarray(Y).copy()
+            else:
+                X_full, T_full, Y_full = X, T, Y  # Referenz, keine Kopie
 
             use_holdout = (
                 str(getattr(cfg.data_processing, "validate_on", "cross")).lower() in {"holdout"}
@@ -1214,6 +1223,7 @@ class AnalysisPipeline:
 
             _progress("Base-Learner-Tuning")
             tuned_params_by_model = self._run_tuning(cfg, X, T, Y, mlflow)
+            gc.collect()  # Tuner-Internals freigeben (Optuna Studies, Trial-Daten)
 
             _progress("Training & Cross-Predictions")
             models, preds = self._run_training(cfg, X, T, Y, tuned_params_by_model, holdout_data, mlflow)
@@ -1243,10 +1253,25 @@ class AnalysisPipeline:
                 except Exception:
                     self._logger.warning("Surrogate-Tree-Training fehlgeschlagen.", exc_info=True)
 
+            gc.collect()  # Nach Surrogate freigeben
+            self._logger.info("RAM-Optimierung: gc.collect() nach Surrogate.")
+
             if bundle_enabled:
                 _progress("Bundle-Export")
             self._run_bundle_export(cfg, models, eval_summary, X, T, Y, X_full, T_full, Y_full, selected_feature_columns, holdout_data, export_bundle, bundle_dir, bundle_id, mlflow)
             self._run_optional_output(cfg, eval_summary, removed, preds)
+
+            # ── RAM-Optimierung: Nicht mehr benötigte Objekte freigeben ──
+            # Nach Bundle-Export und Prediction-Output werden nur noch
+            # eval_summary und report für den HTML-Report benötigt.
+            _champ = self._determine_champion(cfg, eval_summary, models) if eval_summary else None
+            for mname in list(models.keys()):
+                if mname != _champ and mname != SURROGATE_MODEL_NAME:
+                    del models[mname]
+            preds.clear()
+            del X_full, T_full, Y_full
+            gc.collect()
+            self._logger.info("RAM-Optimierung: Modelle, Predictions und X_full freigegeben.")
 
             # ── eval_summary.json immer speichern (fuer UI) ──
             try:
