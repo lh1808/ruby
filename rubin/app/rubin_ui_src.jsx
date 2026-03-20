@@ -1865,7 +1865,7 @@ const buildYaml = (cfg) => {
   a(`  enabled: ${!!cfg.tuningEnabled}`);
   if(cfg.tuningEnabled) {
     a(`  n_trials: ${cfg.tuningTrials||30}`);
-    a(`  cv_splits: ${cfg.tuningSingleFold?1:(cfg.cvSplits||5)}`);
+    a(`  cv_splits: ${cfg.cvSplits||5}`);
     a(`  metric: ${cfg.tuningMetric||"roc_auc"}`);
     if(cfg.tuningSingleFold) a("  single_fold: true");
     if(cfg.tuningPerRole) a("  per_role: true");
