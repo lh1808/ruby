@@ -150,6 +150,11 @@ class AnalysisPipeline:
                 n_before / 1e6, n_after / 1e6, (1 - n_after / max(n_before, 1)) * 100,
             )
 
+        self._logger.info(
+            "Daten geladen: X=%s, T=%s (unique=%s), Y=%s (unique=%s), S=%s",
+            X.shape, T.shape, np.unique(T).tolist(), Y.shape, np.unique(Y).tolist(),
+            S.shape if S is not None else "None",
+        )
         return X, T, Y, S
 
     # ------------------------------------------------------------------
@@ -219,6 +224,10 @@ class AnalysisPipeline:
 
         if cfg.tuning.enabled:
             tuner = BaseLearnerTuner(cfg)
+            self._logger.info(
+                "Starte Tuning: X=%s, Y=%s (unique=%s), T=%s (unique=%s)",
+                X.shape, Y.shape, np.unique(Y).tolist(), T.shape, np.unique(T).tolist(),
+            )
             tuned_params_by_model = tuner.tune_all(cfg.models.models_to_train, X=X, Y=Y, T=T)
 
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
