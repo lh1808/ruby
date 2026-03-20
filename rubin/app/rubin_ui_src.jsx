@@ -492,7 +492,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
       return;
     }
     try {
-      const res = await fetch("api/detect-columns", {
+      const res = await fetch("./api/detect-columns", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({path: filePath, target_column: dp.target, treatment_column: dp.treatment, delimiter: dp.delimiter || ","})
       });
@@ -553,7 +553,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
     try {
       // Config an Backend senden und DataPrep starten
       const yaml = buildDataPrepYaml(dp);
-      const res = await fetch("api/run-dataprep", {
+      const res = await fetch("./api/run-dataprep", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({yaml})
       });
@@ -566,7 +566,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
       // Polling: Fortschritt vom Backend abfragen
       const poll = async () => {
         try {
-          const pr = await fetch("api/progress");
+          const pr = await fetch("./api/progress");
           const state = await pr.json();
           setDpProgress(state.percent || 0);
           if (state.status === "done") {
@@ -581,7 +581,8 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
             return;
           }
           if (state.status === "error") {
-            setDpError(state.message || "Datenvorbereitung fehlgeschlagen.");
+            const detail = state.stderr_tail ? "\n\nDetails:\n" + state.stderr_tail : "";
+            setDpError((state.message || "Datenvorbereitung fehlgeschlagen.") + detail);
             setDpRunning(false); setDpProgress(0);
             return;
           }
@@ -881,7 +882,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
                     <input type="file" accept=".csv,.parquet,.sas7bdat" style={{display:"none"}} onChange={async e=>{
                       const file=e.target.files[0];if(!file)return;
                       const fd=new FormData();fd.append("file",file);
-                      try{const r=await fetch("api/upload",{method:"POST",body:fd});const d=await r.json();
+                      try{const r=await fetch("./api/upload",{method:"POST",body:fd});const d=await r.json();
                         if(d.status==="done"&&d.path){const nf=[...dp.evalFiles];nf[i]=d.path;setDp({...dp,evalFiles:nf})}
                         else alert("Upload fehlgeschlagen: "+(d.message||""))
                       }catch(err){alert("Upload fehlgeschlagen: " + (err.message || "Server nicht erreichbar"))}
@@ -1082,7 +1083,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
       setActiveAddons(new Set());
       setImportStatus({ok:true, msg:"Konfiguration erfolgreich geladen – " + Object.keys(parsed).length + " Felder übernommen."});
       // Importierte Config auch ans Backend senden
-      fetch("api/import-config", {
+      fetch("./api/import-config", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({yaml_text: text})
       }).catch(()=>{});
@@ -1227,7 +1228,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                 const fd = new FormData();
                 fd.append("file", file);
                 try {
-                  const res = await fetch("api/upload", {method:"POST", body: fd});
+                  const res = await fetch("./api/upload", {method:"POST", body: fd});
                   const data = await res.json();
                   if(data.status === "done" && data.path) {
                     set({...cfg, [f.key]: data.path});
@@ -1271,7 +1272,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                   const fd = new FormData();
                   fd.append("file", file);
                   try {
-                    const res = await fetch("api/upload", {method:"POST", body: fd});
+                    const res = await fetch("./api/upload", {method:"POST", body: fd});
                     const data = await res.json();
                     if(data.status === "done" && data.path) {
                       set({...cfg, [f.key]: data.path});
@@ -1970,7 +1971,7 @@ const PPreview = ({cfg}) => {const y=buildYaml(cfg),issues=validate(cfg);const m
     <MC value={cfg.bundleEnabled?"An":"Aus"} label="Bundle"/>
   </Row>
   <div style={{height:16}}/>
-  <Sec title="Konfigurations-Vorschau"><div style={{background:"#1e1e2e",border:"none",borderRadius:10,padding:"20px 24px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,whiteSpace:"pre-wrap",maxHeight:520,overflowY:"auto",lineHeight:1.7,color:"#cdd6f4",boxShadow:"inset 0 2px 8px rgba(0,0,0,0.15)"}}>{y}</div><div style={{marginTop:14,display:"flex",gap:10}}><Btn small onClick={()=>navigator.clipboard?.writeText(y)}>Kopieren</Btn><Btn small secondary onClick={()=>{const b=new Blob([y],{type:"text/yaml"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="config.yml";a.click();}}>YAML herunterladen</Btn><Btn small secondary onClick={()=>fetch("api/save-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml:y,filename:"config.yml"})}).then(r=>r.json()).then(d=>{if(d.status==="done")alert("Config gespeichert: "+d.path)}).catch(()=>alert("Backend nicht erreichbar"))}>Auf Server speichern</Btn></div></Sec><Sec title="Validierung">{issues.length>0?issues.map((i,x)=><Info key={x} type="warn">{i}</Info>):<Info type="success">Konfiguration ist valide.</Info>}</Sec></>);};
+  <Sec title="Konfigurations-Vorschau"><div style={{background:"#1e1e2e",border:"none",borderRadius:10,padding:"20px 24px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,whiteSpace:"pre-wrap",maxHeight:520,overflowY:"auto",lineHeight:1.7,color:"#cdd6f4",boxShadow:"inset 0 2px 8px rgba(0,0,0,0.15)"}}>{y}</div><div style={{marginTop:14,display:"flex",gap:10}}><Btn small onClick={()=>navigator.clipboard?.writeText(y)}>Kopieren</Btn><Btn small secondary onClick={()=>{const b=new Blob([y],{type:"text/yaml"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="config.yml";a.click();}}>YAML herunterladen</Btn><Btn small secondary onClick={()=>fetch("./api/save-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml:y,filename:"config.yml"})}).then(r=>r.json()).then(d=>{if(d.status==="done")alert("Config gespeichert: "+d.path)}).catch(()=>alert("Backend nicht erreichbar"))}>Auf Server speichern</Btn></div></Sec><Sec title="Validierung">{issues.length>0?issues.map((i,x)=><Info key={x} type="warn">{i}</Info>):<Info type="success">Konfiguration ist valide.</Info>}</Sec></>);};
 
 const PRun = ({cfg,setPg}) => {
   const issues = validate(cfg);
@@ -2034,7 +2035,7 @@ const PRun = ({cfg,setPg}) => {
     // Config an Backend senden und Analyse starten
     try {
       const yaml = buildYaml(cfg);
-      const res = await fetch("api/run-analysis", {
+      const res = await fetch("./api/run-analysis", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({yaml})
       });
@@ -2083,7 +2084,7 @@ const PRun = ({cfg,setPg}) => {
       pollingRef.current = setInterval(async () => {
         if(!mountedRef.current) { stopPolling(); return; }
         try {
-          const pr = await fetch("api/progress");
+          const pr = await fetch("./api/progress");
           const state = await pr.json();
           // Step-Fortschritt aktualisieren
           if (state.step && state.step_index > 0) {
@@ -2114,12 +2115,12 @@ const PRun = ({cfg,setPg}) => {
             setRunning(false);
             // Report und Ergebnisse laden
             try {
-              const repRes = await fetch("api/report");
+              const repRes = await fetch("./api/report");
               const repData = await repRes.json();
               if(repData.report_url) setReportUrl(repData.report_url);
             } catch(e) {}
             try {
-              const resRes = await fetch("api/results");
+              const resRes = await fetch("./api/results");
               const resData = await resRes.json();
               if(resData.files) setResultFiles(resData.files);
             } catch(e) {}
@@ -2128,7 +2129,8 @@ const PRun = ({cfg,setPg}) => {
           }
           if (state.status === "error") {
             stopPolling();
-            setError(state.message || "Analyse fehlgeschlagen");
+            const detail = state.stderr_tail ? "\n\nDetails:\n" + state.stderr_tail : "";
+            setError((state.message || "Analyse fehlgeschlagen") + detail);
             setRunning(false);
             return;
           }
@@ -2153,7 +2155,7 @@ const PRun = ({cfg,setPg}) => {
     setRunning(false); setStepProgress(0); setStepDurations({});
     setReportUrl(null); setResultFiles([]);
     // Backend-State auch zurücksetzen
-    fetch("api/reset", {method:"POST"}).catch(()=>{});
+    fetch("./api/reset", {method:"POST"}).catch(()=>{});
   };
 
   const fmtTime = s => String(Math.floor(s/60)) + ":" + String(s%60).padStart(2,"0");
@@ -2183,7 +2185,7 @@ const PRun = ({cfg,setPg}) => {
               <span style={{fontSize:12,fontFamily:"monospace",color:"#888",background:"#faf6f6",padding:"3px 10px",borderRadius:6}}>{fmtTime(elapsed)}</span>
             </div>
             <ProgressTracker currentStep={step} error={error} steps={STEPS} enabled={enabledRef.current} completedSteps={completed} stepProgress={stepProgress} stepDurations={stepDurations} totalElapsed={elapsed}/>
-            {error && !running && <Info type="error"><strong>Analyse fehlgeschlagen:</strong> {error}</Info>}
+            {error && !running && <Info type="error"><strong>Analyse fehlgeschlagen:</strong> <span style={{whiteSpace:"pre-wrap",fontFamily:error.includes("Details:")?"'JetBrains Mono',monospace":"inherit",fontSize:error.includes("Details:")?11.5:"inherit"}}>{error}</span></Info>}
           </>
         )}
         {!done && (
@@ -2207,13 +2209,13 @@ const PRun = ({cfg,setPg}) => {
               <div style={{padding:"40px 20px",textAlign:"center",color:"#888",fontSize:14}}>
                 <div style={{fontSize:32,marginBottom:12,opacity:0.4}}>📊</div>
                 <div style={{fontWeight:600,color:"#57606a",marginBottom:6}}>Report wird geladen ...</div>
-                <div>Falls der Report nicht erscheint: <strong onClick={()=>window.open("api/download/output/analysis_report.html","_blank")} style={{color:"#9B111E",cursor:"pointer",textDecoration:"underline"}}>Direkt herunterladen</strong></div>
+                <div>Falls der Report nicht erscheint: <strong onClick={()=>window.open("./api/download/output/analysis_report.html","_blank")} style={{color:"#9B111E",cursor:"pointer",textDecoration:"underline"}}>Direkt herunterladen</strong></div>
               </div>
             )}
           </div>
           <div style={{marginTop:12,display:"flex",gap:10}}>
             <Btn small onClick={()=>setShowReport(false)}>Report ausblenden</Btn>
-            <Btn small secondary onClick={()=>window.open(reportUrl || "api/download/output/analysis_report.html","_blank")}>Report herunterladen</Btn>
+            <Btn small secondary onClick={()=>window.open(reportUrl || "./api/download/output/analysis_report.html","_blank")}>Report herunterladen</Btn>
           </div>
         </Sec>
       )}
@@ -2224,11 +2226,11 @@ const PRun = ({cfg,setPg}) => {
             <>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                 {resultFiles.map(f => (
-                  <FileCard key={f.name} name={f.name} desc={f.desc} onClick={()=>window.open("api/download/" + (f.path||("output/"+f.name)),"_blank")}/>
+                  <FileCard key={f.name} name={f.name} desc={f.desc} onClick={()=>window.open("./api/download/" + (f.path||("output/"+f.name)),"_blank")}/>
                 ))}
               </div>
               <div style={{marginTop:14,display:"flex",gap:10}}>
-                <Btn onClick={()=>window.open("api/results","_blank")}>Alle Ergebnisse als ZIP</Btn>
+                <Btn onClick={()=>window.open("./api/results","_blank")}>Alle Ergebnisse als ZIP</Btn>
                 <Btn secondary onClick={resetAll}>Neue Analyse</Btn>
               </div>
             </>
@@ -2236,8 +2238,8 @@ const PRun = ({cfg,setPg}) => {
             <>
               <Info type="warn">Ergebnis-Dateien werden vom Backend geladen. Falls nichts erscheint, prüfe den Output-Ordner manuell oder lade die Seite neu.</Info>
               <div style={{marginTop:14,display:"flex",gap:10}}>
-                <Btn small onClick={async ()=>{try{const r=await fetch("api/results");const d=await r.json();if(d.files)setResultFiles(d.files)}catch(e){}}}>Ergebnisse neu laden</Btn>
-                <Btn small secondary onClick={()=>window.open("api/results","_blank")}>Ergebnisse direkt öffnen</Btn>
+                <Btn small onClick={async ()=>{try{const r=await fetch("./api/results");const d=await r.json();if(d.files)setResultFiles(d.files)}catch(e){}}}>Ergebnisse neu laden</Btn>
+                <Btn small secondary onClick={()=>window.open("./api/results","_blank")}>Ergebnisse direkt öffnen</Btn>
                 <Btn secondary onClick={resetAll}>Neue Analyse</Btn>
               </div>
             </>
@@ -2266,7 +2268,7 @@ export default function App() {
     let mounted = true;
     const check = async () => {
       try {
-        const r = await fetch("api/health");
+        const r = await fetch("./api/health");
         if(!r.ok) throw new Error("HTTP " + r.status);
         const d = await r.json();
         if(mounted) { setServerOk(true); setServerError(""); }

@@ -180,10 +180,15 @@ def detect_columns():
     if not filepath:
         return jsonify({"status": "error", "message": "Kein Pfad angegeben."}), 400
 
-    full = (ROOT / filepath).resolve()
-    if not str(full).startswith(str(ROOT.resolve())):
-        log.warning("Path-Traversal-Versuch blockiert (detect-columns): %s", filepath)
-        return jsonify({"status": "error", "message": "Ungueltiger Pfad."}), 403
+    # Absolute Pfade (z.B. PVC: /mnt/data/...) direkt verwenden,
+    # relative Pfade werden relativ zu ROOT aufgelöst + Traversal-Check
+    if os.path.isabs(filepath):
+        full = Path(filepath).resolve()
+    else:
+        full = (ROOT / filepath).resolve()
+        if not str(full).startswith(str(ROOT.resolve())):
+            log.warning("Path-Traversal-Versuch blockiert (detect-columns): %s", filepath)
+            return jsonify({"status": "error", "message": "Ungueltiger Pfad."}), 403
     if not full.exists():
         return jsonify({"status": "error", "message": f"Nicht gefunden: {filepath}"}), 404
 
@@ -619,7 +624,7 @@ def get_report():
 
     result = {"status": "done" if report_path else "not_found"}
     if report_path:
-        result["report_url"] = f"api/view/{report_path.relative_to(ROOT)}"
+        result["report_url"] = f"./api/view/{report_path.relative_to(ROOT)}"
     if metrics:
         result["metrics"] = metrics
 
