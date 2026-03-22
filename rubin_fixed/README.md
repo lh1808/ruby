@@ -89,7 +89,7 @@ pip install flask pandas pyarrow pyyaml
 python -m app.server
 ```
 
-Die UI führt durch alle Schritte: Datenvorbereitung (optional), Treatment-Typ und Vorlage, Modellauswahl, Tuning-Konfiguration, Config-Preview und Analyse-Start. Erzeugt die gleiche YAML-Konfiguration, die auch direkt an `run_analysis.py` übergeben werden kann.
+Die UI führt durch alle Schritte: Datenvorbereitung (optional), Treatment-Typ und Vorlage, Modellauswahl, Tuning-Konfiguration, Parallelisierungs-Level, Config-Preview und Analyse-Start. Während der Analyse zeigt ein Live-Log-Fenster die Pipeline-Logs in Echtzeit. Erzeugt die gleiche YAML-Konfiguration, die auch direkt an `run_analysis.py` übergeben werden kann.
 
 Architektur: React-Frontend (`app/frontend/index.html`) mit Flask-Backend (`app/server.py`). Die React-App wird als statische HTML vom Server ausgeliefert und kommuniziert über REST-API-Endpoints für Upload, Analyse-Start, Fortschritts-Tracking und Downloads.
 
@@ -132,6 +132,7 @@ Abgedeckt sind unter anderem:
 - Explainability (SHAP/Permutation) und Segment-Analysen auf Bundle-Basis
 - NaN-Toleranz: Alle Modelle außer CausalForestDML können mit fehlenden Werten umgehen (via LightGBM/CatBoost). CausalForestDML und die Feature-Selektionsmethode `causal_forest` (GRF) werden bei NaN automatisch übersprungen.
 - Validierungsmodi: Cross-Validation (K-Fold), Holdout (stratifizierter Split) und External (separater Eval-Datensatz, leakage-frei)
+- Parallelisierung: Konfigurierbar über `constants.parallel_level` (1–4). Level 2 (Default) parallelisiert Base Learner, Level 3–4 parallelisieren zusätzlich CV-Folds via joblib
 
 ## Explainability
 

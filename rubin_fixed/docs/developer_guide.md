@@ -182,9 +182,11 @@ Eine Tuning-Task wird über folgende Merkmale beschrieben:
 
 Beispiele für gemeinsam nutzbare Aufgaben:
 - `TLearner / models` und `XLearner / models` (Outcome-Regression pro Gruppe)
-- DML-Familie für `model_y` und `model_t` (Nuisance-Classifier)
-- Propensity-Modelle auf allen Daten (Classifier)
+- `model_y` wird über NonParamDML, ParamDML und CausalForestDML geteilt (Outcome-Classifier)
+- `model_t` (DML) und `model_propensity` (DRLearner) teilen die Propensity-Aufgabe
 - `DRLearner / model_regression` und `SLearner / overall_model` nutzen eigene Regression-Tasks
+
+**Hinweis:** `model_y` und `model_t` werden **nicht** zusammengelegt (verschiedene Zieltypen und Objective-Familien). Jede Study erhält einen eigenen, deterministisch abgeleiteten Seed.
 
 Nicht zusammengelegt werden Aufgaben, die auf anderer Datengrundlage, mit anderem Zieltyp oder unterschiedlichem Estimator-Task (Classifier vs. Regressor) trainiert werden.
 

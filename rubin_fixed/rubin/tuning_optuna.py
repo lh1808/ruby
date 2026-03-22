@@ -787,6 +787,11 @@ class BaseLearnerTuner:
 
         for model_name, roles in tuned_by_model.items():
             if roles:
+                # HINWEIS: "default" wird als Fallback für Rollen genutzt, die NICHT
+                # explizit getunt wurden. Das betrifft v.a. model_final (CATE-Regression).
+                # model_registry._base() verhindert, dass model_final diese Classifier-
+                # Defaults erbt — model_final nutzt nur base_fixed_params oder explizit
+                # getunte model_final-Params (via FinalModelTuning).
                 roles.setdefault("default", next(iter(roles.values())))
         return tuned_by_model
 

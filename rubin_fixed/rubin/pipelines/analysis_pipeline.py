@@ -419,6 +419,18 @@ class AnalysisPipeline:
 
             model = self.registry.create(name, ctx)
 
+            # Warnung: DML-Modelle mit model_final profitieren stark von FinalModelTuning
+            if name.lower() in {"nonparamdml", "drlearner"} and not cfg.final_model_tuning.enabled:
+                has_explicit_final = bool(ctx.tuned_params.get("model_final"))
+                if not has_explicit_final:
+                    self._logger.warning(
+                        "%s: model_final hat keine getunten Parameter. "
+                        "Das CATE-Effektmodell nutzt nur base_fixed_params. "
+                        "Empfehlung: final_model_tuning.enabled=true aktivieren, "
+                        "um model_final über R-Score zu optimieren.",
+                        name,
+                    )
+
             if name.lower() == "causalforestdml" and getattr(cfg.causal_forest, "use_econml_tune", False):
                 try:
                     tr_idx = _first_crossfit_train_indices(len(X), T, n_splits=cfg.data_processing.cross_validation_splits, seed=cfg.constants.random_seed)

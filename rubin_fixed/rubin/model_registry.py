@@ -69,8 +69,23 @@ erzeugt."""
     def _base(ctx: ModelContext, role: str):
         # Wichtig: fixe Defaults aus der Konfiguration immer berücksichtigen.
         # Getunte Werte (rollen-spezifisch) überschreiben bei Schlüsselkonflikten.
-        params = dict(ctx.base_fixed_params or {})
-        params.update(ctx.params_for(role))
+        #
+        # KRITISCH: model_final (CATE-Effektmodell) darf NICHT die "default"-Params
+        # erben, die vom Base-Learner-Tuning stammen. Diese wurden für Nuisance-
+        # Klassifikation (Y/T) optimiert und sind für CATE-Regression ungeeignet.
+        # Typisches Symptom: min_child_samples=121 + num_leaves=13 kollabiert den
+        # CATE-Baum zu einem Intercept → konstante Vorhersagen für alle Samples.
+        # model_final wird stattdessen über FinalModelTuning (R-Score) separat
+        # optimiert. Ohne FMT: nur base_fixed_params (sinnvolle Defaults).
+        cate_model_roles = {"model_final"}
+        if role in cate_model_roles:
+            params = dict(ctx.base_fixed_params or {})
+            explicit = ctx.tuned_params.get(role)
+            if explicit:
+                params.update(explicit)
+        else:
+            params = dict(ctx.base_fixed_params or {})
+            params.update(ctx.params_for(role))
 
         # Task-Auswahl pro Rolle — Regressor vs. Classifier.
         #

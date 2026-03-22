@@ -181,10 +181,12 @@ Dadurch werden gleiche Aufgaben nur einmal gerechnet, ohne unterschiedliche Lern
 
 Typische geteilte Aufgaben im Repo:
 
-- `model_y` / `model_t` innerhalb der DML-Familie
+- `model_y` wird über NonParamDML, ParamDML und CausalForestDML geteilt (gleiche Outcome-Klassifikation)
+- `model_t` (DML) und `model_propensity` (DRLearner) teilen die gleiche Propensity-Klassifikation
 - gruppenspezifische Outcome-Modelle von `TLearner` und `XLearner`
-- Propensity-Modelle auf allen Daten
 - separate Regressions-Tasks für CATE-/Final-Modelle
+
+**Wichtig:** `model_y` und `model_t` sind **keine** geteilte Aufgabe — sie haben verschiedene Zieltypen (Y vs. T) und Objective-Familien (Outcome vs. Propensity) und werden deshalb mit eigenem Optuna-Seed separat getunt.
 
 `per_learner=true` oder `per_role=true` können dieses Sharing gezielt feiner auflösen.
 
@@ -238,3 +240,7 @@ Weitere typische Study-Namen:
 - `baselearner__lgbm__outcome__classifier__all__no_t__y` (DML model_y)
 - `baselearner__lgbm__propensity__classifier__all__no_t__t` (Propensity, geteilt)
 - `baselearner__lgbm__grouped_outcome_regression__regressor__group_specific_shared_params__no_t__y` (TLearner/XLearner)
+
+### Seed-Behandlung pro Study
+
+Der TPE-Sampler erhält pro Study einen **eigenen Seed**, der deterministisch aus `optuna_seed` + Study-Key abgeleitet wird: `(optuna_seed + sha256(study_key)) % 2³¹`. Damit explorieren verschiedene Tasks (z. B. `model_y` vs. `model_t`) unterschiedliche Hyperparameter-Bereiche, obwohl sie denselben Basis-Seed verwenden. Die Ergebnisse bleiben reproduzierbar, solange `optuna_seed` und die Modellkonfiguration identisch sind.

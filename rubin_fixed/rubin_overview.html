@@ -177,6 +177,16 @@ details .detail-content code{font-size:11.5px}details .detail-content table{font
 <details><summary>Was bedeutet „Locking" beim Tuning?</summary><div class="detail-content">
 <p>Tuning (Base-Learner, Final-Model, CausalForestDML tune) wird nur auf dem <strong>ersten Fold</strong> durchgeführt und für alle weiteren Folds wiederverwendet. Das verhindert inkonsistente Cross-Predictions durch pro-Fold-unterschiedliche Hyperparameter.</p>
 </div></details>
+<details><summary>Parallelisierung der CV-Folds</summary><div class="detail-content">
+<p>Die CV-Folds sind vollständig unabhängig voneinander und können parallel verarbeitet werden. rubin nutzt dafür <strong>joblib mit Thread-Backend</strong> — LightGBM und CatBoost geben den GIL während des C++-Trainings frei, sodass mehrere Folds echte Parallelität erzielen.</p>
+<p>Die Steuerung erfolgt über <code>constants.parallel_level</code>:</p>
+<ul>
+<li><strong>Level 1–2:</strong> Folds sequentiell (nur Base Learner intern parallel)</li>
+<li><strong>Level 3:</strong> 2–4 Folds parallel (Heuristik: min. 4 Kerne pro Fold)</li>
+<li><strong>Level 4:</strong> Alle Folds parallel (maximaler Speedup, höchster RAM)</li>
+</ul>
+<p>CatBoost nutzt jetzt <code>thread_count=-1</code> (alle Kerne), analog zu LightGBMs <code>n_jobs=-1</code>. Jede Optuna-Study erhält einen eigenen, deterministisch abgeleiteten Seed, damit verschiedene Tasks (z. B. <code>model_y</code> vs. <code>model_t</code>) unterschiedliche Hyperparameter-Bereiche explorieren.</p>
+</div></details>
 <details><summary>Best Practice: Empfohlener Ablauf für neue Use Cases</summary><div class="detail-content">
 <ol><li><strong>Exploration:</strong> <code>config_quickstart.yml</code> mit 1-2 Modellen, kein Tuning, <code>df_frac: 0.1</code> → Plausibilitätsprüfung</li>
 <li><strong>Baseline:</strong> <code>config_lgbm_standard.yml</code> mit 3-4 Modellen, 30 Trials → erste belastbare Ergebnisse</li>
@@ -259,12 +269,21 @@ pixi install                                     # Environment aufbauen</pre>
 
 <!-- 6 MODELLE -->
 <h3 id="cfg-mlflow">5.1 mlflow &amp; constants</h3>
-<p>Experiment-Tracking und globaler Seed für Reproduzierbarkeit.</p>
+<p>Experiment-Tracking, Reproduzierbarkeit und Parallelisierung.</p>
 <table><tr><th>Feld</th><th>Typ</th><th>Default</th><th>Beschreibung</th></tr>
 <tr><td><code>mlflow.experiment_name</code></td><td><code>str</code></td><td><code>"rubin"</code></td><td>MLflow-Experiment-Name</td></tr>
-<tr><td><code>constants.SEED</code></td><td><code>int</code></td><td><code>42</code></td><td>Globaler Random-Seed für Reproduzierbarkeit</td></tr></table>
+<tr><td><code>constants.SEED</code></td><td><code>int</code></td><td><code>42</code></td><td>Globaler Random-Seed für Reproduzierbarkeit</td></tr>
+<tr><td><code>constants.parallel_level</code></td><td><code>int</code></td><td><code>2</code></td><td>Parallelisierungs-Level (1–4). Steuert Kern-Nutzung und Fold-Parallelisierung.</td></tr></table>
+<details><summary>Parallelisierungs-Level im Detail</summary><div class="detail-content">
+<table><tr><th>Level</th><th>Name</th><th>Base Learner</th><th>CV-Folds</th><th>RAM</th></tr>
+<tr><td><strong>1</strong></td><td>Minimal 🔋</td><td>1 Kern</td><td>sequentiell</td><td>~1×</td></tr>
+<tr><td><strong>2</strong></td><td>Moderat ⚡</td><td>alle Kerne</td><td>sequentiell</td><td>~1×</td></tr>
+<tr><td><strong>3</strong></td><td>Hoch 🔥</td><td>alle Kerne</td><td>2–4 parallel</td><td>~2–3×</td></tr>
+<tr><td><strong>4</strong></td><td>Maximum 🚀</td><td>alle Kerne</td><td>alle parallel</td><td>~3–5×</td></tr></table>
+<p>Level 2 ist der sichere Default (rückwärtskompatibel). Level 3–4 beschleunigen den Lauf deutlich, erhöhen aber den RAM proportional. Die Fold-Parallelisierung nutzt joblib mit Thread-Backend — LightGBM und CatBoost geben den GIL frei, sodass echte Parallelität erzielt wird.</p>
+</div></details>
 <details><summary>Best Practice: Reproduzierbarkeit sicherstellen</summary><div class="detail-content">
-<p>Der Seed steuert: Train/Test-Splits, Cross-Prediction-Folds, Optuna-Sampler, Base-Learner-Seeds, Feature-Selektion (Permutation). Bei gleichem Seed und gleichen Daten sind die Ergebnisse reproduzierbar.</p>
+<p>Der Seed steuert: Train/Test-Splits, Cross-Prediction-Folds, Optuna-Sampler (pro Study deterministisch abgeleitet), Base-Learner-Seeds, Feature-Selektion (Permutation). Bei gleichem Seed und gleichen Daten sind die Ergebnisse reproduzierbar.</p>
 <p><strong>Tipp:</strong> Für Robustheits-Checks den Seed variieren (z.B. 42, 123, 7) und prüfen, ob die Champion-Auswahl stabil bleibt.</p>
 </div></details>
 
@@ -3297,8 +3316,8 @@ const PAGES_TO_SHOW = [
   {key:"selection",label:"Auswahl & Export",desc:"Champion-Metrik mit dynamischer Beschreibung, Surrogate-Einzelbaum, Bundle-Export für Production."},
   {key:"explain",label:"Explainability",desc:"SHAP vs Permutation als Radio-Karten, Modellauswahl-Chips, Segmentanalyse mit Quantilen."},
   {key:"preview",label:"Config-Preview",desc:"5 Summary-Cards, vollständige YAML-Vorschau (18 Sektionen, Dark Theme), Validierung."},
-  {key:"run",label:"Analyse starten – Startansicht",desc:"Validierung, Summary-Cards und Start-Button. Zeigt offene Probleme oder die Zusammenfassung."},
-  {key:"run_progress",label:"Analyse – Pipeline läuft",desc:"Fortschritts-Tracker mit Step-Durations, Prozentanzeige pro Schritt und ETA-Berechnung."},
+  {key:"run",label:"Analyse starten – Startansicht",desc:"Validierung, Summary-Cards (inkl. Parallel-Level) und Start-Button. Zeigt offene Probleme oder die Zusammenfassung."},
+  {key:"run_progress",label:"Analyse – Pipeline läuft",desc:"Fortschritts-Tracker mit Step-Durations, Prozentanzeige pro Schritt, ETA-Berechnung und Live-Log-Fenster (Pipeline-Logs in Echtzeit, scrollbar, Catppuccin-Dark-Theme)."},
   {key:"run_done",label:"Analyse – Abgeschlossen",desc:"Report-Viewer, Modellvergleich-Tabelle und Download-Grid mit allen Artefakten."},
 ];
 

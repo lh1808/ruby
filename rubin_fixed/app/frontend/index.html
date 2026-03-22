@@ -359,7 +359,7 @@ const ColumnPicker = ({columns,roles,setRoles}) => (
 
 // ── Presets ──
 // ── Preset system: Treatment Type → Base (exclusive) → Add-ons (additive) ──
-const DEFAULT_CFG = {expName:"rubin",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,fsMaxFeatures:0,downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,testSize:0.2,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,maxPredRows:0,savePreds:false,predsFormat:"csv"};
+const DEFAULT_CFG = {expName:"rubin",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,fsMaxFeatures:0,downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,testSize:0.2,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,maxPredRows:0,savePreds:false,predsFormat:"csv",parallelLevel:2};
 
 const BT_PRESETS = [
   {key:"bt_quickstart",label:"Quickstart",desc:"2 Modelle, kein Tuning – zum Testen",
@@ -987,7 +987,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
 
 // ── YAML Import: parses config.yml back to cfg state ──
 const YAML_TO_CFG = {
-  "mlflow.experiment_name":"expName","constants.SEED":"seed",
+  "mlflow.experiment_name":"expName","constants.SEED":"seed","constants.parallel_level":"parallelLevel",
   "data_files.x_file":"x_file","data_files.t_file":"t_file","data_files.y_file":"y_file","data_files.s_file":"s_file",
   "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file",
   "treatment.type":"treatmentType","treatment.reference_group":"refGroup",
@@ -1389,6 +1389,18 @@ const PConfig = ({cfg,set}) => (<>
       <Col><Inp label="Experiment-Name" value={cfg.expName} onChange={v=>set({...cfg,expName:v})} icon="E" help="Wird als MLflow experiment_name und im Report-Titel verwendet"/></Col>
       <Col><Inp label="Random Seed" type="number" value={cfg.seed} onChange={v=>set({...cfg,seed:v})} icon="#" help="Reproduzierbarkeit: gleicher Seed = gleiche Ergebnisse bei identischen Daten"/></Col>
     </Row>
+    <div style={{marginTop:10}}>
+      <div style={{fontSize:12,fontWeight:600,color:"#57606a",marginBottom:8}}>Parallelisierungs-Level</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {[{v:1,l:"Minimal",d:"1 Kern, Folds sequentiell. Sicher auf jeder Maschine, minimaler RAM.",icon:"🔋"},{v:2,l:"Moderat",d:"Alle Kerne pro Fit, Folds sequentiell. Guter Kompromiss.",icon:"⚡"},{v:3,l:"Hoch",d:"Alle Kerne, 2–4 Folds parallel. Schneller, aber mehr RAM.",icon:"🔥"},{v:4,l:"Maximum",d:"Alle Kerne, alle Folds parallel. Schnellste Laufzeit, höchster RAM.",icon:"🚀"}].map(o=>{
+          const active=(cfg.parallelLevel||2)===o.v;
+          return(<button key={o.v} onClick={()=>set({...cfg,parallelLevel:o.v})} style={{flex:"1 1 140px",padding:"10px 14px",borderRadius:10,border:active?"2px solid #9B111E":"1.5px solid #e0d6d7",background:active?"#FDF2F3":"#fff",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:16}}>{o.icon}</span><span style={{fontSize:13,fontWeight:active?700:500,color:active?"#6B0D15":"#24292f"}}>{o.l}</span><span style={{fontSize:11,color:"#999",marginLeft:"auto"}}>Level {o.v}</span></div>
+            <div style={{fontSize:11,color:"#57606a",marginTop:4,lineHeight:1.4}}>{o.d}</div>
+          </button>);
+        })}
+      </div>
+    </div>
   </Sec>
 
   <Sec title="Validierungsstrategie">
@@ -1855,6 +1867,7 @@ const buildYaml = (cfg) => {
   a("");
   a("constants:");
   a(`  SEED: ${cfg.seed||42}`);
+  if((cfg.parallelLevel||2) !== 2) a(`  parallel_level: ${cfg.parallelLevel}`);
   a("");
   a("data_files:");
   a(`  x_file: ${cfg.x_file||"data/processed/X.parquet"}`);
@@ -2019,6 +2032,7 @@ const PPreview = ({cfg}) => {const y=buildYaml(cfg),issues=validate(cfg);const m
     <MC value={cfg.tuningEnabled?(cfg.tuningTrials||30)+"T":"Aus"} label="Tuning"/>
     <MC value={cfg.validateOn==="holdout"?"Holdout":cfg.validateOn==="external"?"External":"CV-"+(cfg.cvSplits||5)} label="Validierung"/>
     <MC value={cfg.bundleEnabled?"An":"Aus"} label="Bundle"/>
+    <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||2)-1]} label="Parallel"/>
   </Row>
   <div style={{height:16}}/>
   <Sec title="Konfigurations-Vorschau"><div style={{background:"#1e1e2e",border:"none",borderRadius:10,padding:"20px 24px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,whiteSpace:"pre-wrap",maxHeight:520,overflowY:"auto",lineHeight:1.7,color:"#cdd6f4",boxShadow:"inset 0 2px 8px rgba(0,0,0,0.15)"}}>{y}</div><div style={{marginTop:14,display:"flex",gap:10}}><Btn small onClick={()=>navigator.clipboard?.writeText(y)}>Kopieren</Btn><Btn small secondary onClick={()=>{const b=new Blob([y],{type:"text/yaml"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="config.yml";a.click();}}>YAML herunterladen</Btn><Btn small secondary onClick={()=>fetch("./api/save-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml:y,filename:"config.yml"})}).then(r=>r.json()).then(d=>{if(d.status==="done")alert("Config gespeichert: "+d.path)}).catch(()=>alert("Backend nicht erreichbar"))}>Auf Server speichern</Btn></div></Sec><Sec title="Validierung">{issues.length>0?issues.map((i,x)=><Info key={x} type="warn">{i}</Info>):<Info type="success">Konfiguration ist valide.</Info>}</Sec></>);};
@@ -2041,6 +2055,9 @@ const PRun = ({cfg,setPg}) => {
   const pollingRef = useRef(null);
   const [reportUrl, setReportUrl] = useState(null);
   const [resultFiles, setResultFiles] = useState([]);
+  const [logText, setLogText] = useState("");
+  const [showLogs, setShowLogs] = useState(true);
+  const logEndRef = useRef(null);
 
   const enabledRef = useRef(new Set());
   enabledRef.current = new Set(["load","train","eval","report"]);
@@ -2155,6 +2172,11 @@ const PRun = ({cfg,setPg}) => {
             }
           }
         }
+        // Live-Logs aktualisieren (stderr = Python-Logging, stdout = [rubin]-Progress)
+        const parts = [];
+        if (state.stdout_tail) parts.push(state.stdout_tail);
+        if (state.stderr_tail) parts.push(state.stderr_tail);
+        if (parts.length) setLogText(parts.join("\n"));
         if (state.status === "done") {
           stopPolling();
           const allIds = STEPS.filter(s => enabledRef.current.has(s.id)).map(s => s.id);
@@ -2174,7 +2196,7 @@ const PRun = ({cfg,setPg}) => {
           return;
         }
       } catch(e) { /* Polling-Fehler ignorieren, retry beim nächsten Intervall */ }
-    }, 10000);
+    }, 3000);
   };
 
   const startAnalysis = async () => {
@@ -2184,7 +2206,7 @@ const PRun = ({cfg,setPg}) => {
     stopPolling();
     setRunning(true); setDone(false); setError(null);
     setCompleted(new Set()); setElapsed(0); setShowReport(false);
-    setStep(null); setStepProgress(0); setStepDurations({});
+    setStep(null); setStepProgress(0); setStepDurations({}); setLogText("");
     setReportUrl(null); setResultFiles([]);
 
     // Config an Backend senden und Analyse starten
@@ -2240,6 +2262,7 @@ const PRun = ({cfg,setPg}) => {
               <MC value={cfg.tuningEnabled?(cfg.tuningTrials||30)+"T":"Aus"} label="Tuning"/>
               <MC value={cfg.validateOn==="holdout"?"Holdout":cfg.validateOn==="external"?"External":"CV-"+(cfg.cvSplits||5)} label="Validierung"/>
               <MC value={cfg.bundleEnabled?"An":"Aus"} label="Bundle"/>
+              <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||2)-1]} label="Parallel"/>
             </Row>
           </>
         )}
@@ -2251,6 +2274,20 @@ const PRun = ({cfg,setPg}) => {
             </div>
             <ProgressTracker currentStep={step} error={error} steps={STEPS} enabled={enabledRef.current} completedSteps={completed} stepProgress={stepProgress} stepDurations={stepDurations} totalElapsed={elapsed}/>
             {error && !running && <Info type="error"><strong>Analyse fehlgeschlagen:</strong> <span style={{whiteSpace:"pre-wrap",fontFamily:error.includes("Details:")?"'JetBrains Mono',monospace":"inherit",fontSize:error.includes("Details:")?11.5:"inherit"}}>{error}</span></Info>}
+            {(running || (done && logText)) && logText && (
+              <div style={{marginTop:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:600,color:"#57606a",letterSpacing:0.3,textTransform:"uppercase"}}>Pipeline-Logs</span>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:10,color:"#999",fontFamily:"monospace"}}>{(logText.split("\n").length)} Zeilen</span>
+                    <span onClick={()=>setShowLogs(p=>!p)} style={{fontSize:11,color:"#9B111E",cursor:"pointer",fontWeight:600}}>{showLogs?"Ausblenden":"Einblenden"}</span>
+                  </div>
+                </div>
+                {showLogs && (
+                  <div style={{background:"#1e1e2e",borderRadius:10,padding:"16px 20px",fontFamily:"'JetBrains Mono',monospace",fontSize:11,whiteSpace:"pre-wrap",wordBreak:"break-all",height:280,overflowY:"auto",lineHeight:1.65,color:"#cdd6f4",boxShadow:"inset 0 2px 8px rgba(0,0,0,0.15)",border:"1px solid #313244"}} ref={el=>{if(el&&running)el.scrollTop=el.scrollHeight}}>{logText}</div>
+                )}
+              </div>
+            )}
           </>
         )}
         {!done && (
@@ -2351,7 +2388,7 @@ function App() {
   }, []);
   const [dp,setDp] = useState({files:[""],evalFiles:[],featurePath:"",target:"Y",treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"data/processed",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],chunksize:300000,sasEncoding:"utf-8",dpMlflow:false,dpMlflowExp:""});
   const [cfg,set] = useState({
-    expName:"rubin",seed:42,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,testSize:0.2,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,
+    expName:"rubin",seed:42,parallelLevel:2,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,testSize:0.2,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"lgbm",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"roc_auc",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:200000,cfTune:false,cfTuneMaxRows:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,segEnabled:true,segQuantiles:10,segTopFeatures:8,segMaxBins:6,segMaxCats:15,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:200000,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},fracSL:1,fracTL:1,fracXL:1,fracDML:1,fracDR:1,
   });
 
   // ── Sidebar Status Computation ──
@@ -2513,7 +2550,6 @@ function App() {
 
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-
 </script>
 <script>
 (function() {

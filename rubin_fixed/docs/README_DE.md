@@ -161,3 +161,14 @@ Eine vollständige Referenz aller Felder (inkl. Begründungen und Empfehlungen) 
 
 Details stehen in `tuning_optuna.md`.
 
+### Parallelisierung
+
+Über `constants.parallel_level` (1–4) lässt sich steuern, wie aggressiv parallelisiert wird:
+
+- **Level 1 (Minimal):** 1 Kern pro Fit, Folds sequentiell — sicher auf jeder Maschine.
+- **Level 2 (Moderat, Default):** Alle Kerne pro Fit, Folds sequentiell — guter Kompromiss.
+- **Level 3 (Hoch):** Alle Kerne, 2–4 Folds parallel — schneller, aber mehr RAM.
+- **Level 4 (Maximum):** Alle Kerne, alle Folds parallel — schnellste Laufzeit, höchster RAM.
+
+Die CV-Fold-Parallelisierung nutzt joblib mit Thread-Backend. Da LightGBM und CatBoost den GIL während des C++-Trainings freigeben, wird echte Parallelität erzielt. In der Web-UI ist der Level über einen 4-Button-Selektor in der Experiment-Sektion konfigurierbar.
+

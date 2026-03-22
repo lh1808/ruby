@@ -80,7 +80,7 @@ Optuna optimiert die Nuisance-Modelle (Outcome, Propensity). Task-basiertes Shar
 R-Score/R-Loss für das CATE-Effektmodell (nur NonParamDML, DRLearner). Locking: nur auf dem ersten CV-Fold, Parameter für alle Folds wiederverwendet.
 
 ### Schritt 5: Training + Cross-Predictions
-Alle konfigurierten kausalen Learner werden trainiert. Cross-Predictions (K-Fold Out-of-Fold) erzeugen für jede Beobachtung eine Vorhersage aus einem Modell, das diese Beobachtung nicht gesehen hat.
+Alle konfigurierten kausalen Learner werden trainiert. Cross-Predictions (K-Fold Out-of-Fold) erzeugen für jede Beobachtung eine Vorhersage aus einem Modell, das diese Beobachtung nicht gesehen hat. Die CV-Folds können je nach `constants.parallel_level` parallel verarbeitet werden (joblib, Thread-Backend). Level 1–2: sequentiell, Level 3: auto-parallel (2–4 Folds), Level 4: alle Folds parallel.
 
 ### Schritt 6: Evaluation
 Sortierungsmetriken auf Cross-Predictions: Qini, AUUC, Uplift@10/20/50%, Policy Value. DRTester-Plots (Calibration, Qini, TOC), scikit-uplift-Plots (Qini-Kurve, Uplift-by-Percentile, Treatment-Balance). Optional: Vergleich gegen historischen Score.
