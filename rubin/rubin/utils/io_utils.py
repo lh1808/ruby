@@ -6,7 +6,12 @@ import pandas as pd
 
 
 def read_table(path: str, *, use_index: bool = True) -> pd.DataFrame:
-    """Liest CSV oder Parquet anhand der Dateiendung."""
+    """Liest CSV oder Parquet anhand der Dateiendung.
+
+    Bei CSV-Dateien wird automatisch erkannt ob die erste Spalte ein Index ist
+    (leerer Header oder 'Unnamed: 0'). Falls ja, wird sie als Index verwendet.
+    Falls nein, werden alle Spalten als Daten behandelt.
+    """
     p = str(path)
     if p.lower().endswith((".parquet", ".pq")):
         try:
@@ -18,6 +23,14 @@ def read_table(path: str, *, use_index: bool = True) -> pd.DataFrame:
             ) from e
         return df if use_index else df.reset_index(drop=True)
 
-    if use_index:
-        return pd.read_csv(p, index_col=0, low_memory=False)
-    return pd.read_csv(p, low_memory=False)
+    # CSV: erst ohne index_col lesen, dann prüfen ob Spalte 0 ein Index ist
+    df = pd.read_csv(p, low_memory=False)
+
+    if use_index and len(df.columns) > 0:
+        first_col = str(df.columns[0])
+        # Typische Index-Spalte: leerer Name oder "Unnamed: 0"
+        if first_col == "" or first_col.startswith("Unnamed:"):
+            df = df.set_index(df.columns[0])
+            df.index.name = None
+
+    return df

@@ -47,8 +47,6 @@ class DataPrepPipeline:
         # Sanity-Checks früh, damit Fehler nicht erst nach teuren I/O-Schritten auffallen.
         if not self.dp.data_path:
             raise ValueError("data_prep.data_path ist leer. Bitte mindestens eine Eingabedatei konfigurieren.")
-        if not self.dp.feature_path:
-            raise ValueError("data_prep.feature_path ist nicht gesetzt. Bitte Feature-Dictionary konfigurieren.")
         if not self.dp.target or not self.dp.treatment:
             raise ValueError("data_prep.target und data_prep.treatment müssen gesetzt sein.")
 
@@ -238,39 +236,52 @@ class DataPrepPipeline:
                 mlflow.log_metric("deduplicate_rows_removed", n_removed)
 
         _progress("Feature-Extraktion")
-        # Feature-Dictionary
-        feature_dictionary = pd.read_excel(dp.feature_path)
-        required_feature_dict_columns = {"ROLE", "NAME", "LEVEL"}
-        missing_feature_dict_columns = sorted(required_feature_dict_columns - set(feature_dictionary.columns))
-        if missing_feature_dict_columns:
-            raise ValueError(
-                "Im Feature-Dictionary fehlen Pflichtspalten: "
-                f"{missing_feature_dict_columns}. Erwartet werden mindestens ROLE, NAME und LEVEL."
-            )
-        if dp.log_to_mlflow:
-            import mlflow
-
-            mlflow.log_param("feature_path", dp.feature_path)
-
-        input_list = feature_dictionary.loc[feature_dictionary["ROLE"].astype(str).str.upper() == "INPUT", "NAME"].astype(str).str.upper().tolist()
-        available_features = [f for f in input_list if f in df.columns]
-        X = df[available_features].copy()
 
         score_col = str(dp.score_name).upper() if dp.score_name else None
+        target_col = str(dp.target).upper()
+        treat_col = str(dp.treatment).upper()
+
+        if dp.feature_path:
+            # Feature-Dictionary vorhanden → verwende ROLE/NAME/LEVEL
+            feature_dictionary = pd.read_excel(dp.feature_path)
+            required_feature_dict_columns = {"ROLE", "NAME", "LEVEL"}
+            missing_feature_dict_columns = sorted(required_feature_dict_columns - set(feature_dictionary.columns))
+            if missing_feature_dict_columns:
+                raise ValueError(
+                    "Im Feature-Dictionary fehlen Pflichtspalten: "
+                    f"{missing_feature_dict_columns}. Erwartet werden mindestens ROLE, NAME und LEVEL."
+                )
+            if dp.log_to_mlflow:
+                import mlflow
+                mlflow.log_param("feature_path", dp.feature_path)
+
+            input_list = feature_dictionary.loc[feature_dictionary["ROLE"].astype(str).str.upper() == "INPUT", "NAME"].astype(str).str.upper().tolist()
+            available_features = [f for f in input_list if f in df.columns]
+            X = df[available_features].copy()
+
+            nominal_list = feature_dictionary.loc[feature_dictionary["LEVEL"].astype(str).str.upper() == "NOMINAL", "NAME"].astype(str).str.upper().tolist()
+            categorical_columns = [c for c in nominal_list if c in X.columns]
+            self._logger.info("Feature-Dictionary: %d INPUT-Features, %d NOMINAL.", len(available_features), len(categorical_columns))
+        else:
+            # Kein Feature-Dictionary → alle Spalten außer Target/Treatment/Score als Features
+            exclude_cols = {target_col, treat_col}
+            if score_col:
+                exclude_cols.add(score_col)
+            # Auch typische ID-/Index-Spalten ausschließen
+            available_features = [c for c in df.columns if c not in exclude_cols]
+            X = df[available_features].copy()
+            categorical_columns = []
+            self._logger.info("Kein Feature-Dictionary: %d Features (alle außer Target/Treatment).", len(available_features))
+
         if dp.score_as_feature and score_col and score_col in df.columns:
             X[score_col] = df[score_col]
 
-        nominal_list = feature_dictionary.loc[feature_dictionary["LEVEL"].astype(str).str.upper() == "NOMINAL", "NAME"].astype(str).str.upper().tolist()
-        categorical_columns = [c for c in nominal_list if c in X.columns]
-
-        # Zusätzlich: object-Spalten als kategorisch behandeln.
+        # object- und category-Spalten als kategorisch behandeln
         for col in X.columns:
-            if X[col].dtype == "object" and col not in categorical_columns:
+            if X[col].dtype in ("object", "category") and col not in categorical_columns:
                 categorical_columns.append(col)
 
         # Y, T, optional S
-        target_col = str(dp.target).upper()
-        treat_col = str(dp.treatment).upper()
         Y = df[target_col].to_numpy().ravel()
         T = df[treat_col].to_numpy().ravel()
         S = None

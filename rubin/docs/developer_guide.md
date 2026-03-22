@@ -117,7 +117,7 @@ def make_my_learner(ctx: ModelContext):
         ctx.base_learner_type,
         {**ctx.base_fixed_params, **ctx.params_for("overall_model")},
         seed=ctx.seed,
-        task="classifier",
+        task="regressor",  # Meta-Learner Outcome-Modelle sind Regressoren
     )
     return MyLearner(model=base)
 
@@ -181,11 +181,12 @@ Eine Tuning-Task wird über folgende Merkmale beschrieben:
 - Zieltyp
 
 Beispiele für gemeinsam nutzbare Aufgaben:
-- `TLearner / models` und `XLearner / models`
-- DML-Familie für `model_y` und `model_t`
-- Propensity-Modelle auf allen Daten
+- `TLearner / models` und `XLearner / models` (Outcome-Regression pro Gruppe)
+- DML-Familie für `model_y` und `model_t` (Nuisance-Classifier)
+- Propensity-Modelle auf allen Daten (Classifier)
+- `DRLearner / model_regression` und `SLearner / overall_model` nutzen eigene Regression-Tasks
 
-Nicht zusammengelegt werden Aufgaben, die auf anderer Datengrundlage oder mit anderem Zieltyp trainiert werden.
+Nicht zusammengelegt werden Aufgaben, die auf anderer Datengrundlage, mit anderem Zieltyp oder unterschiedlichem Estimator-Task (Classifier vs. Regressor) trainiert werden.
 
 ## 6) Final-Modelle und R-Score-Tuning
 

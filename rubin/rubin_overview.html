@@ -215,9 +215,9 @@ pixi install                                     # Environment aufbauen</pre>
 <h3 id="dataprep">DataPrep-Pipeline</h3>
 <p>Einmalige Aufbereitung von Rohdaten in standardisierte Parquet-Dateien.</p>
 <table><tr><th>Aspekt</th><th>Details</th></tr>
-<tr><td>Eingabe</td><td>Rohdaten (CSV/SAS/Parquet), Feature-Dictionary (Excel)</td></tr>
+<tr><td>Eingabe</td><td>Rohdaten (CSV/SAS/Parquet), optional Feature-Dictionary (Excel). Ohne Dictionary werden alle Spalten außer Target/Treatment als Features verwendet.</td></tr>
 <tr><td>Ausgabe</td><td>X/T/Y.parquet, preprocessor.pkl, dtypes.json, schema.json</td></tr>
-<tr><td>Features</td><td>Chunked Reading, Fill-NA, Downcasting, Mehrdatei-Logik, Deduplizierung</td></tr></table>
+<tr><td>Features</td><td>Chunked Reading, Fill-NA, Downcasting, Mehrdatei-Logik, Deduplizierung, Feature-Selektion per Dictionary oder automatisch (alle außer Target/Treatment)</td></tr></table>
 <details><summary>Deduplizierung im Detail</summary><div class="detail-content">
 <p>Bei <code>deduplicate: true</code> + <code>deduplicate_id_column: "PARTNER_ID"</code> wird direkt nach dem Einlesen und <strong>vor</strong> der Feature-Reduktion auf einen Eintrag pro ID reduziert. Der erste Eintrag wird behalten. Anzahl entfernter Duplikate wird geloggt.</p>
 </div></details>
@@ -273,7 +273,7 @@ pixi install                                     # Environment aufbauen</pre>
 <table><tr><th>Feld</th><th>Typ</th><th>Default</th><th>Beschreibung</th></tr>
 <tr><td><code>data_path</code></td><td><code>List[str]</code></td><td><span class="badge badge-required">Pflicht</span></td><td>Pfade zu Rohdaten</td></tr>
 <tr><td><code>output_path</code></td><td><code>str</code></td><td><span class="badge badge-required">Pflicht</span></td><td>Ausgabeverzeichnis</td></tr>
-<tr><td><code>feature_path</code></td><td><code>Optional[str]</code></td><td><code>null</code></td><td>Feature-Dictionary (Excel)</td></tr>
+<tr><td><code>feature_path</code></td><td><code>Optional[str]</code></td><td><code>null</code></td><td>Feature-Dictionary (Excel). Wenn nicht gesetzt: alle Spalten außer Target/Treatment/Score als Features</td></tr>
 <tr><td><code>info_path</code></td><td><code>Optional[str]</code></td><td><code>null</code></td><td>Zusätzliche Feature-Infos</td></tr>
 <tr><td><code>delimiter</code></td><td><code>str</code></td><td><code>","</code></td><td>CSV-Trennzeichen</td></tr>
 <tr><td><code>chunksize</code></td><td><code>Optional[int]</code></td><td><code>null</code></td><td>Chunk-Größe für große Dateien</td></tr>
@@ -393,7 +393,7 @@ pixi install                                     # Environment aufbauen</pre>
 <tr><td><code>timeout_seconds</code></td><td><code>Optional[int]</code></td><td><code>null</code></td><td>Timeout pro Study; null = kein Limit</td></tr>
 <tr><td><code>cv_splits</code></td><td><code>int</code></td><td><code>5</code></td><td>CV-Folds pro Trial. Empfehlung: identisch mit <code>data_processing.cross_validation_splits</code></td></tr>
 <tr><td><code>single_fold</code></td><td><code>bool</code></td><td><code>false</code></td><td>Nur 1 Fold pro Trial evaluieren statt K. Bis zu K× schneller, etwas verrauschter.</td></tr>
-<tr><td><code>metric</code></td><td><code>str</code></td><td><code>"roc_auc"</code></td><td>sklearn-Scoring-String</td></tr>
+<tr><td><code>metric</code></td><td><code>str</code></td><td><code>"roc_auc"</code></td><td>Scoring für Classifier-Tasks (Nuisance). Regressor-Tasks (Meta-Learner Outcome) nutzen automatisch neg. MSE</td></tr>
 <tr><td><code>per_learner</code></td><td><code>bool</code></td><td><code>false</code></td><td>Separate Parameter je Verfahren</td></tr>
 <tr><td><code>per_role</code></td><td><code>bool</code></td><td><code>false</code></td><td>Separate Parameter je Rolle (model_y, model_t)</td></tr>
 <tr><td><code>max_tuning_rows</code></td><td><code>Optional[int]</code></td><td><code>200000</code></td><td>Laufzeitregler; null = alle Zeilen</td></tr>
@@ -409,12 +409,13 @@ pixi install                                     # Environment aufbauen</pre>
 <pre><code>tuning:
   search_space:
     lgbm:
-      n_estimators: { type: int, low: 100, high: 500 }
-      learning_rate: { type: float, low: 0.01, high: 0.3, log: true }
-      num_leaves: { type: int, low: 15, high: 63 }
+      n_estimators: { type: int, low: 50, high: 600 }
+      learning_rate: { type: float, low: 0.01, high: 0.2, log: true }
+      num_leaves: { type: int, low: 7, high: 40 }
+      max_depth: { type: int, low: 3, high: 6 }
     catboost:
-      iterations: { type: int, low: 100, high: 500 }
-      depth: { type: int, low: 4, high: 8 }</code></pre>
+      iterations: { type: int, low: 50, high: 600 }
+      depth: { type: int, low: 3, high: 6 }</code></pre>
 <p>Unterstützte Typen: <code>int</code>, <code>float</code>, <code>categorical</code>. Bei <code>categorical</code>: <code>choices: [val1, val2]</code>. Bei <code>float</code>: <code>log: true</code> für log-uniforme Verteilung.</p>
 </div></details>
 <details><summary>Best Practice: Tuning konfigurieren</summary><div class="detail-content">
@@ -534,6 +535,10 @@ pixi install                                     # Environment aufbauen</pre>
 <p><strong>ParamDML</strong>: CATE(X) = X·β. Starke Annahme, aber interpretierbare Koeffizienten.</p>
 </div></details>
 <div class="info-box">Alle DML/DR-Modelle: <code>discrete_treatment=True</code>, <code>discrete_outcome=True</code>.</div>
+<div class="info-box"><strong>Classifier vs. Regressor — Rollenzuordnung:</strong><br>
+<strong>Classifier</strong> (EconML nutzt intern <code>predict_proba</code>): <code>model_y</code>, <code>model_t</code>, <code>model_propensity</code>, <code>propensity_model</code>.<br>
+<strong>Regressor</strong> (EconML ruft intern <code>predict()</code> auf → muss E[Y|X] ∈ [0,1] liefern): <code>model_final</code>, <code>cate_models</code>, <code>overall_model</code> (SLearner), <code>models</code> (TLearner/XLearner), <code>model_regression</code> (DRLearner).<br>
+Meta-Learner Outcome-Modelle <em>müssen</em> Regressoren sein — ein Classifier gibt nur 0/1 zurück, was zu CATE=0 führt.</div>
 <div class="warn-box"><strong>Fehlende Werte:</strong> Alle Modelle außer CausalForestDML können mit fehlenden Werten umgehen, da sie LightGBM oder CatBoost als Base Learner nutzen. CausalForestDML basiert auf einem GRF (Generalized Random Forest), der keine NaN-Werte unterstützt. Bei fehlenden Werten wird CausalForestDML automatisch übersprungen. Gleiches gilt für die Feature-Selektionsmethode <code>causal_forest</code> (GRF).</div>
 </section>
 
@@ -541,7 +546,8 @@ pixi install                                     # Environment aufbauen</pre>
 <section id="tuning-detail"><h2>7. Tuning</h2>
 <p>Hyperparameter-Optimierung in zwei Stufen: Nuisance-Modelle (Optuna) und CATE-Effektmodell (R-Score).</p>
 <table><tr><th>Stufe</th><th>Ziel</th><th>Methode</th><th>Modelle</th></tr>
-<tr><td><strong>Base-Learner</strong></td><td>Nuisance (Outcome, Propensity)</td><td>Optuna, task-basiertes Sharing</td><td>Alle</td></tr>
+<tr><td><strong>Base-Learner (Classifier)</strong></td><td>Nuisance: model_y, model_t, Propensity</td><td>Optuna (ROC-AUC), task-basiertes Sharing</td><td>DML, DRLearner, XLearner</td></tr>
+<tr><td><strong>Base-Learner (Regressor)</strong></td><td>Outcome: overall_model, models, model_regression</td><td>Optuna (neg. MSE), task-basiertes Sharing</td><td>SLearner, TLearner, XLearner, DRLearner</td></tr>
 <tr><td><strong>Final-Model</strong></td><td>CATE-Effektmodell</td><td>R-Score, Locking auf 1. Fold</td><td>NonParamDML, DRLearner (wählbar)</td></tr>
 <tr><td><strong>CausalForest</strong></td><td>Wald-Parameter</td><td>EconML <code>tune()</code></td><td>CausalForestDML</td></tr></table>
 <p>Best-Scores werden als <code>tuning_best__&lt;task&gt;</code> nach MLflow geloggt und im HTML-Report angezeigt.</p>
@@ -772,7 +778,7 @@ pixi install                                     # Environment aufbauen</pre>
 <p>Anleitungen zur Erweiterung des Frameworks: neue Learner, Base-Learner und Best Practices.</p>
 <details><summary>Neuen kausalen Learner ergänzen</summary><div class="detail-content">
 <p>Ein neuer kausaler Learner wird über die Factory-Registry angebunden. Die Pipeline-Logik selbst muss nicht verändert werden.</p>
-<ol><li><strong>Factory-Funktion</strong> in <code>model_registry.py</code>: Erhält einen <code>ModelContext</code> (Base-Learner, Fixparams, getunte Params), gibt ein EconML-kompatibles Modell zurück.</li><li><strong><code>SUPPORTED_MODEL_NAMES</code></strong> in <code>settings.py</code> erweitern, damit Pydantic den Namen akzeptiert.</li><li><strong>BT-Only?</strong> Falls kein MT: in <code>_BT_ONLY_MODELS</code>. Pipeline blockiert dann automatisch bei <code>treatment.type: multi</code>.</li><li><strong>Rollensignaturen</strong> in <code>tuning_optuna.py</code> prüfen. Standard: <code>model_y</code> + <code>model_t</code>. Zusatzrollen (z.B. <code>model_final</code>) ergänzen.</li><li><strong>Testen:</strong> Minimaler Analyselauf, Cross-Predictions, Evaluation und Bundle-Export prüfen.</li></ol>
+<ol><li><strong>Factory-Funktion</strong> in <code>model_registry.py</code>: Erhält einen <code>ModelContext</code> (Base-Learner, Fixparams, getunte Params), gibt ein EconML-kompatibles Modell zurück.</li><li><strong><code>SUPPORTED_MODEL_NAMES</code></strong> in <code>settings.py</code> erweitern, damit Pydantic den Namen akzeptiert.</li><li><strong>BT-Only?</strong> Falls kein MT: in <code>_BT_ONLY_MODELS</code>. Pipeline blockiert dann automatisch bei <code>treatment.type: multi</code>.</li><li><strong>Rollensignaturen</strong> in <code>tuning_optuna.py</code> prüfen. <strong>Wichtig:</strong> Rollen korrekt als <code>classifier</code> oder <code>regressor</code> markieren. DML-Nuisance (<code>model_y</code>, <code>model_t</code>) = Classifier; Meta-Learner Outcome (<code>overall_model</code>, <code>models</code>) = Regressor; CATE-Modelle (<code>model_final</code>, <code>cate_models</code>) = Regressor. Ein Classifier als Outcome-Modell liefert 0/1 statt Wahrscheinlichkeiten → CATE = 0.</li><li><strong>Testen:</strong> Minimaler Analyselauf, Cross-Predictions, Evaluation und Bundle-Export prüfen.</li></ol>
 </div></details>
 <details><summary>Neuen Base-Learner ergänzen</summary><div class="detail-content">
 <p>Ein Base-Learner ist die ML-Bibliothek für Nuisance-Modelle und Surrogate-Bäume. Aktuell: LightGBM und CatBoost.</p>
@@ -937,14 +943,14 @@ const pages = [
 ];
 const allModels=["SLearner","TLearner","XLearner","DRLearner","NonParamDML","ParamDML","CausalForestDML"];
 const btOnly=new Set(["SLearner","TLearner","XLearner"]);
-const LGBM={n_estimators:{min:50,max:2000,step:50,type:"int"},learning_rate:{min:0.01,max:0.2,step:0.005,type:"float"},num_leaves:{min:15,max:255,step:1,type:"int"},max_depth:{min:3,max:12,step:1,type:"int"},min_child_samples:{min:5,max:200,step:5,type:"int"},subsample:{min:0.5,max:1,step:0.05,type:"float"},colsample_bytree:{min:0.5,max:1,step:0.05,type:"float"},reg_alpha:{min:0,max:10,step:0.1,type:"float"},reg_lambda:{min:0,max:10,step:0.1,type:"float"}};
-const CB={iterations:{min:100,max:2000,step:50,type:"int"},learning_rate:{min:0.01,max:0.3,step:0.005,type:"float"},depth:{min:4,max:10,step:1,type:"int"},l2_leaf_reg:{min:1,max:20,step:0.5,type:"float"},subsample:{min:0.5,max:1,step:0.05,type:"float"}};
+const LGBM={n_estimators:{min:50,max:600,step:50,type:"int"},learning_rate:{min:0.01,max:0.2,step:0.005,type:"float"},num_leaves:{min:7,max:40,step:1,type:"int"},max_depth:{min:3,max:6,step:1,type:"int"},min_child_samples:{min:5,max:200,step:5,type:"int"},subsample:{min:0.5,max:1,step:0.05,type:"float"},colsample_bytree:{min:0.5,max:1,step:0.05,type:"float"},reg_alpha:{min:0,max:10,step:0.1,type:"float"},reg_lambda:{min:0,max:10,step:0.1,type:"float"}};
+const CB={iterations:{min:50,max:600,step:50,type:"int"},learning_rate:{min:0.01,max:0.3,step:0.005,type:"float"},depth:{min:3,max:6,step:1,type:"int"},l2_leaf_reg:{min:1,max:20,step:0.5,type:"float"},subsample:{min:0.5,max:1,step:0.05,type:"float"}};
 // Default fixed params per base learner (used when tuning is OFF)
-const LGBM_DEFAULTS={n_estimators:500,learning_rate:0.05,num_leaves:31,max_depth:6,min_child_samples:20,subsample:0.8,colsample_bytree:0.8,reg_alpha:0.1,reg_lambda:1.0};
-const CB_DEFAULTS={iterations:500,learning_rate:0.05,depth:6,l2_leaf_reg:3.0,subsample:0.8};
-// Final model (regressor) – konservativere Defaults
-const LGBM_FINAL_DEFAULTS={n_estimators:300,learning_rate:0.03,num_leaves:15,max_depth:5,min_child_samples:30,subsample:0.7,colsample_bytree:0.7,reg_alpha:1.0,reg_lambda:5.0};
-const CB_FINAL_DEFAULTS={iterations:300,learning_rate:0.03,depth:5,l2_leaf_reg:5.0,subsample:0.7};
+const LGBM_DEFAULTS={n_estimators:100,learning_rate:0.1,num_leaves:31,max_depth:-1,min_child_samples:20,subsample:1.0,colsample_bytree:1.0,reg_alpha:0.0,reg_lambda:0.0};
+const CB_DEFAULTS={iterations:100,learning_rate:0.1,depth:6,l2_leaf_reg:3.0,subsample:1.0};
+// Final model (regressor) – konservativere Defaults für CATE-Schätzung
+const LGBM_FINAL_DEFAULTS={n_estimators:100,learning_rate:0.05,num_leaves:15,max_depth:5,min_child_samples:30,subsample:0.8,colsample_bytree:0.8,reg_alpha:0.1,reg_lambda:1.0};
+const CB_FINAL_DEFAULTS={iterations:100,learning_rate:0.05,depth:5,l2_leaf_reg:5.0,subsample:0.8};
 // CausalForestDML forest defaults
 const CF_DEFAULTS={n_estimators:1000,max_depth:null,min_samples_leaf:5,min_samples_split:10,max_features:"auto",max_samples:0.45,min_balancedness_tol:0.45,honest:true,subforest_size:4,n_jobs:-1};
 
@@ -2149,20 +2155,20 @@ const PConfig = ({cfg,set}) => (<>
 // ── Tuning Plan (mirrors tuning_optuna.py logic) ──
 const rolesForModel = m => {
   const n = m.toLowerCase();
-  if(n==="slearner") return [{role:"overall_model",label:"Outcome (mit T als Feature)",sig:"outcome__clf__with_t__all__Y"}];
-  if(n==="tlearner") return [{role:"models",label:"Outcome (pro Gruppe)",sig:"grouped_outcome__clf__no_t__group__Y"}];
+  if(n==="slearner") return [{role:"overall_model",label:"Outcome-Regression (mit T)",sig:"outcome_regression__reg__with_t__all__Y"}];
+  if(n==="tlearner") return [{role:"models",label:"Outcome-Regression (pro Gruppe)",sig:"grouped_outcome_regression__reg__no_t__group__Y"}];
   if(n==="xlearner") return [
-    {role:"models",label:"Outcome (pro Gruppe)",sig:"grouped_outcome__clf__no_t__group__Y"},
+    {role:"models",label:"Outcome-Regression (pro Gruppe)",sig:"grouped_outcome_regression__reg__no_t__group__Y"},
     {role:"cate_models",label:"Pseudo-Effekt (Regressor)",sig:"pseudo_effect__reg__no_t__group__D"},
     {role:"propensity_model",label:"Propensity",sig:"propensity__clf__no_t__all__T"},
   ];
   if(n==="drlearner") return [
     {role:"model_propensity",label:"Propensity",sig:"propensity__clf__no_t__all__T"},
-    {role:"model_regression",label:"Outcome (Regression)",sig:"outcome__clf__no_t__all__Y"},
+    {role:"model_regression",label:"Outcome-Regression",sig:"outcome_regression__reg__no_t__all__Y"},
   ];
   if(["nonparamdml","paramdml","causalforestdml"].includes(n)) return [
-    {role:"model_y",label:"Outcome (model_y)",sig:"outcome__clf__no_t__all__Y"},
-    {role:"model_t",label:"Propensity (model_t)",sig:"propensity__clf__no_t__all__T"},
+    {role:"model_y",label:"Outcome (Classifier)",sig:"outcome__clf__no_t__all__Y"},
+    {role:"model_t",label:"Propensity (Classifier)",sig:"propensity__clf__no_t__all__T"},
   ];
   return [];
 };
@@ -2191,11 +2197,13 @@ const TuningPlanPreview = ({models, perRole, perLearner, trials, cv}) => {
   const totalFits = totalTrials * nCv;
   if(totalStudies === 0) return <Info type="warn">Keine Modelle ausgewählt – kein Tuning nötig.</Info>;
 
-  const sigColors = {"outcome":"#9B111E","propensity":"#D4A853","grouped_outcome":"#6366f1","pseudo_effect":"#1a7f37"};
+  const sigColors = {"outcome":"#9B111E","outcome_regression":"#d97706","propensity":"#D4A853","grouped_outcome":"#6366f1","grouped_outcome_regression":"#7c3aed","pseudo_effect":"#1a7f37"};
   const sigLabel = sig => {
-    if(sig.startsWith("outcome")) return "Outcome";
+    if(sig.startsWith("outcome_regression")) return "Outcome (Regressor)";
+    if(sig.startsWith("outcome")) return "Outcome (Classifier)";
     if(sig.startsWith("propensity")) return "Propensity";
-    if(sig.startsWith("grouped_outcome")) return "Grouped Outcome";
+    if(sig.startsWith("grouped_outcome_regression")) return "Grouped Outcome (Regressor)";
+    if(sig.startsWith("grouped_outcome")) return "Grouped Outcome (Classifier)";
     if(sig.startsWith("pseudo_effect")) return "Pseudo-Effekt";
     return sig;
   };

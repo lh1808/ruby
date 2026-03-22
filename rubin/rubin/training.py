@@ -42,9 +42,13 @@ Rückgabe:
         )
 
     pred = np.asarray(pred)
-    # BT: (n,1) -> (n,); MT: (n, K-1) bleibt erhalten.
-    if pred.ndim == 2 and pred.shape[1] == 1:
-        pred = pred[:, 0]
+    # EconML gibt je nach Modell/Version verschiedene Shapes zurück:
+    # BT: (n,), (n,1), (n,1,1) → immer auf (n,) reduzieren
+    # MT: (n, K-1), (n, K-1, 1) → auf (n, K-1) reduzieren
+    pred = pred.squeeze()
+    # Falls squeeze() ein Skalar erzeugt (n=1), zurück zu 1D
+    if pred.ndim == 0:
+        pred = pred.reshape(1)
     return pred.astype(float)
 
 

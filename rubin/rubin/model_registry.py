@@ -67,10 +67,30 @@ erzeugt."""
         params = dict(ctx.base_fixed_params or {})
         params.update(ctx.params_for(role))
 
-        # Rollen unterscheiden sich in der Zielgröße:
-        # - Outcome/Propensity: binär -> Klassifikator
-        # - CATE/Final-Modelle: kontinuierlicher Effekt -> Regressor
-        task = "regressor" if role in {"model_final", "cate_models"} else "classifier"
+        # Task-Auswahl pro Rolle — Regressor vs. Classifier.
+        #
+        # REGRESSOR (predict() → E[Y|X] ∈ [0,1], kontinuierlich):
+        #   model_final       — CATE-Effektmodell (DML, DRLearner)
+        #   cate_models        — Pseudo-Outcome-Regression (XLearner)
+        #   overall_model      — SLearner: EconML ruft predict() auf, NICHT predict_proba
+        #   models             — TLearner/XLearner: EconML ruft predict() auf
+        #   model_regression   — DRLearner: E[Y|X,T]-Modell. DRLearner hat KEIN
+        #                        discrete_outcome → ruft predict() direkt auf.
+        #                        Classifier → predict()={0,1} → DR-Pseudo-Outcomes kaputt!
+        #                        Regressor → predict()=E[Y|X] → korrekt.
+        #
+        # CLASSIFIER (EconML nutzt intern predict_proba):
+        #   model_y            — NonParamDML: discrete_outcome=True → predict_proba
+        #   model_t            — NonParamDML: discrete_treatment=True → predict_proba
+        #   model_propensity   — DRLearner: Propensity-Score via predict_proba
+        #   propensity_model   — XLearner: Propensity-Score via predict_proba
+        #
+        regressor_roles = {
+            "model_final", "cate_models",
+            "overall_model", "models",       # Meta-Learner Outcome-Modelle
+            "model_regression",              # DRLearner Outcome-Modell
+        }
+        task = "regressor" if role in regressor_roles else "classifier"
         return build_base_learner(ctx.base_learner_type, params, seed=ctx.seed, task=task)
 
     # DML family

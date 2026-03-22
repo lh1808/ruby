@@ -87,6 +87,9 @@ def _first_crossfit_train_indices(n: int, t: np.ndarray, n_splits: int, seed: in
 def _safe_import_optuna():
     try:
         import optuna  # type: ignore
+        # Performance: Optuna-Logging auf WARNING reduzieren
+        # (unterdrückt "Trial X finished with value..." Meldungen)
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
         return optuna
     except Exception as e:
         raise ImportError(
@@ -101,6 +104,7 @@ def _build_lgbm_classifier(params: Dict[str, Any], seed: int):
     fixed = dict(
         random_state=seed,
         n_jobs=-1,
+        verbose=-1,  # Unterdrückt C++-Level stdout (KRITISCH für Pipe-Performance)
     )
     fixed.update(params)
     # Objective wird NICHT hardcodiert, damit LGBMClassifier binary vs.
@@ -115,6 +119,7 @@ def _build_lgbm_regressor(params: Dict[str, Any], seed: int):
     fixed = dict(
         random_state=seed,
         n_jobs=-1,
+        verbose=-1,  # Unterdrückt C++-Level stdout (KRITISCH für Pipe-Performance)
     )
     fixed.update(params)
     # Für Effektmodelle ist Regression zwingend sinnvoll. Falls in fixed_params ein
@@ -170,10 +175,10 @@ def _default_search_space(base_type: str) -> Dict[str, SearchSpaceParameterConfi
     base_type = (base_type or "").lower()
     if base_type == "lgbm":
         return {
-            "n_estimators": SearchSpaceParameterConfig(type="int", low=200, high=1500),
+            "n_estimators": SearchSpaceParameterConfig(type="int", low=50, high=600),
             "learning_rate": SearchSpaceParameterConfig(type="float", low=1e-2, high=2e-1, log=True),
-            "num_leaves": SearchSpaceParameterConfig(type="int", low=15, high=255),
-            "max_depth": SearchSpaceParameterConfig(type="int", low=3, high=12),
+            "num_leaves": SearchSpaceParameterConfig(type="int", low=7, high=40),
+            "max_depth": SearchSpaceParameterConfig(type="int", low=3, high=6),
             "min_child_samples": SearchSpaceParameterConfig(type="int", low=5, high=200),
             "min_child_weight": SearchSpaceParameterConfig(type="float", low=1e-3, high=10.0, log=True),
             "subsample": SearchSpaceParameterConfig(type="float", low=0.5, high=1.0),
@@ -185,9 +190,9 @@ def _default_search_space(base_type: str) -> Dict[str, SearchSpaceParameterConfi
         }
     if base_type == "catboost":
         return {
-            "iterations": SearchSpaceParameterConfig(type="int", low=300, high=2000),
+            "iterations": SearchSpaceParameterConfig(type="int", low=50, high=600),
             "learning_rate": SearchSpaceParameterConfig(type="float", low=1e-2, high=3e-1, log=True),
-            "depth": SearchSpaceParameterConfig(type="int", low=4, high=10),
+            "depth": SearchSpaceParameterConfig(type="int", low=3, high=6),
             "l2_leaf_reg": SearchSpaceParameterConfig(type="float", low=1.0, high=20.0, log=True),
             "random_strength": SearchSpaceParameterConfig(type="float", low=1e-8, high=10.0, log=True),
             "bootstrap_type": SearchSpaceParameterConfig(type="categorical", choices=["Bayesian", "Bernoulli"]),
@@ -340,29 +345,34 @@ class BaseLearnerTuner:
         name = (model_name or "").lower()
         role = (role or "").lower()
 
+        # ── Meta-Learner: Outcome-Modelle sind Regressoren ──
+        # EconML's SLearner/TLearner/XLearner rufen model.predict() auf.
+        # Regressor.predict() = E[Y|X] ∈ [0,1]; Classifier.predict() = {0,1}.
         if name == "slearner" and role == "overall_model":
-            return ("outcome", "classifier", True, "all", "Y")
+            return ("outcome_regression", "regressor", True, "all", "Y")
 
         if name == "tlearner" and role == "models":
-            return ("grouped_outcome", "classifier", False, "group_specific_shared_params", "Y")
+            return ("grouped_outcome_regression", "regressor", False, "group_specific_shared_params", "Y")
 
         if name == "xlearner":
             if role == "models":
-                return ("grouped_outcome", "classifier", False, "group_specific_shared_params", "Y")
+                return ("grouped_outcome_regression", "regressor", False, "group_specific_shared_params", "Y")
             if role == "cate_models":
                 return ("pseudo_effect", "regressor", False, "group_specific_shared_params", "D")
             if role == "propensity_model":
                 return ("propensity", "classifier", False, "all", "T")
 
+        # ── DRLearner ──
         if name == "drlearner":
             if role == "model_propensity":
                 return ("propensity", "classifier", False, "all", "T")
             if role == "model_regression":
-                # EconML's DRLearner verwaltet Treatment intern; ein explizites
-                # Treatment-Feature im Tuning-DataFrame wäre doppelt und kann
-                # das Tuning verzerren.
-                return ("outcome", "classifier", False, "all", "Y")
+                # DRLearner ruft model_regression.predict() auf (kein predict_proba).
+                # Regressor liefert E[Y|X,T] → korrekte DR-Pseudo-Outcomes.
+                return ("outcome_regression", "regressor", False, "all", "Y")
 
+        # ── DML-Familie: Nuisance-Modelle sind Classifier ──
+        # EconML wickelt predict_proba via discrete_outcome/discrete_treatment.
         if name in {"nonparamdml", "paramdml", "causalforestdml"}:
             if role == "model_y":
                 return ("outcome", "classifier", False, "all", "Y")
@@ -436,7 +446,12 @@ class BaseLearnerTuner:
         return plan
 
     def _task_priority(self, task: TuningTask) -> int:
-        order = {"outcome": 0, "grouped_outcome": 1, "propensity": 2, "pseudo_effect": 3}
+        """Tuning-Reihenfolge: Outcome/Regression zuerst, dann Propensity, dann Pseudo-Effekt."""
+        order = {
+            "outcome": 0, "outcome_regression": 1,
+            "grouped_outcome": 2, "grouped_outcome_regression": 3,
+            "propensity": 4, "pseudo_effect": 5,
+        }
         return order.get(task.objective_family, 99)
 
     def _downsample_indices(self, model_name: str, T: np.ndarray, n: int) -> np.ndarray:
@@ -561,6 +576,41 @@ class BaseLearnerTuner:
                 scores.append(float(np.mean(fold_scores)))
         return float(np.mean(scores)) if scores else 0.5
 
+    # ── Regression-Objectives (für Meta-Learner + DRLearner model_regression) ──
+
+    def _score_regressor(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        """Neg. MSE (höher = besser, konsistent mit Optuna maximize)."""
+        return -float(np.mean((np.asarray(y_true) - np.asarray(y_pred)) ** 2))
+
+    def _objective_all_regression(self, params: Dict[str, Any], X_mat: np.ndarray, target: np.ndarray) -> float:
+        """Tuning-Objective für Regressoren auf dem Gesamt-Datensatz (SLearner, DRLearner model_regression)."""
+        scores: List[float] = []
+        for tr, va in self._cv_splits(target.astype(float), single_fold=self.cfg.tuning.single_fold):
+            model = self._fit_model(params, X_mat[tr], target[tr].astype(float), "regressor")
+            pred = model.predict(X_mat[va])
+            scores.append(self._score_regressor(target[va], pred))
+        return float(np.mean(scores)) if scores else -1.0
+
+    def _objective_grouped_regression(self, params: Dict[str, Any], X_mat: np.ndarray, Y: np.ndarray, T: np.ndarray) -> float:
+        """Tuning-Objective für Regressoren pro Treatment-Gruppe (TLearner, XLearner)."""
+        scores: List[float] = []
+        K = len(np.unique(T))
+        strat_labels = np.asarray(T).astype(int) * 10 + np.clip(np.asarray(Y), 0, 1).astype(int)
+        for tr, va in self._cv_splits(strat_labels, single_fold=self.cfg.tuning.single_fold):
+            fold_scores: List[float] = []
+            for group in range(K):
+                tr_mask = T[tr] == group
+                va_mask = T[va] == group
+                if tr_mask.sum() < 2 or va_mask.sum() < 1:
+                    continue
+                y_train = Y[tr][tr_mask].astype(float)
+                model = self._fit_model(params, X_mat[tr][tr_mask], y_train, "regressor")
+                pred = model.predict(X_mat[va][va_mask])
+                fold_scores.append(self._score_regressor(Y[va][va_mask], pred))
+            if fold_scores:
+                scores.append(float(np.mean(fold_scores)))
+        return float(np.mean(scores)) if scores else -1.0
+
     def _build_xlearner_pseudo_outcomes(self, X_mat: np.ndarray, Y: np.ndarray, T: np.ndarray, nuisance_params: Dict[str, Any]) -> np.ndarray:
         mu0 = np.zeros(len(Y), dtype=float)
         mu1 = np.zeros(len(Y), dtype=float)
@@ -654,10 +704,17 @@ class BaseLearnerTuner:
         def objective(trial):
             params = _suggest_params(trial, self.cfg.base_learner.type, self.cfg.tuning.search_space)
             params = {**fixed_defaults, **params}
+            # Classifier-Objectives (Nuisance-Modelle: model_y, model_t, propensity)
             if task.objective_family in {"outcome", "propensity"}:
                 return self._objective_all_classification(params, X_mat=X_mat, target=target.astype(int))
             if task.objective_family == "grouped_outcome":
                 return self._objective_grouped_outcome(params, X_mat=X_mat, Y=target.astype(int), T=T_task.astype(int))
+            # Regressor-Objectives (Meta-Learner outcome, DRLearner model_regression)
+            if task.objective_family == "outcome_regression":
+                return self._objective_all_regression(params, X_mat=X_mat, target=target.astype(float))
+            if task.objective_family == "grouped_outcome_regression":
+                return self._objective_grouped_regression(params, X_mat=X_mat, Y=target.astype(float), T=T_task.astype(int))
+            # XLearner CATE-Modelle
             if task.objective_family == "pseudo_effect":
                 nuisance = dict(shared_params.get("xlearner__models") or fixed_defaults)
                 return self._objective_xlearner_cate(
@@ -705,7 +762,7 @@ class BaseLearnerTuner:
         for task in sorted(plan.values(), key=self._task_priority):
             best = self._tune_task(task, X=X, Y=Y, T=T, shared_params=tuned_by_task)
             tuned_by_task[task.key] = best
-            if task.objective_family == "grouped_outcome" and any(m.lower() == "xlearner" for m, _ in task.roles):
+            if task.objective_family == "grouped_outcome_regression" and any(m.lower() == "xlearner" for m, _ in task.roles):
                 tuned_by_task.setdefault("xlearner__models", best)
 
         tuned_by_model: Dict[str, Dict[str, Dict[str, Any]]] = {}

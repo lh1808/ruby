@@ -36,12 +36,12 @@ flowchart TD
 
 Einmalige, reproduzierbare Aufbereitung von Rohdaten in standardisierte Parquet-Dateien.
 
-**Eingabe:** Rohdaten (CSV, Parquet, SAS), Feature-Dictionary (Excel)
+**Eingabe:** Rohdaten (CSV, Parquet, SAS), optional Feature-Dictionary (Excel)
 
 **Ablauf:**
 - Einlesen (chunked, multi-file mit merge/treatment_only-Logik)
 - Deduplizierung (optional: ein Eintrag pro Kunden-ID)
-- Feature-Selektion über Feature-Dictionary (Spalte ROLE = INPUT)
+- Feature-Selektion: über Feature-Dictionary (Spalte ROLE = INPUT) falls vorhanden, sonst alle Spalten außer Target/Treatment
 - Replacement-Maps, Fill-NA, Encoding, Speicherreduktion (Downcasting)
 - Optional: Eval-Daten transformieren (`eval_data_path`) — Preprocessor wird nur auf Train gefittet, Eval-Daten werden nur transformiert (kein Leakage)
 

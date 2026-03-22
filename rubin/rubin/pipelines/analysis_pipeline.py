@@ -424,7 +424,27 @@ class AnalysisPipeline:
 
             preds[name] = df_pred
             models[name] = current_model
-            _log_temp_artifact(mlflow, lambda p, _df=df_pred: _df.to_csv(p, index=False), f"predictions_{name}.csv")
+            # Predictions mit voller Präzision speichern (float64, 10 signifikante Stellen)
+            _log_temp_artifact(mlflow, lambda p, _df=df_pred: _df.to_csv(p, index=False, float_format="%.10g"), f"predictions_{name}.csv")
+
+            # Diagnose: Warnung wenn alle CATEs 0 sind
+            pred_cols = [c for c in df_pred.columns if c.startswith(f"Predictions_{name}")]
+            for pc in pred_cols:
+                vals = df_pred[pc].dropna()
+                if len(vals) > 0 and (vals == 0).all():
+                    self._logger.warning(
+                        "WARNUNG: %s hat ausschließlich CATE=0 Predictions! "
+                        "Mögliche Ursachen: (1) Daten haben keinen Treatment-Effekt, "
+                        "(2) Modell verwendet predict statt predict_proba (Meta-Learner), "
+                        "(3) Extrem unbalancierte Klassen.", pc,
+                    )
+                elif len(vals) > 0:
+                    self._logger.info(
+                        "%s: CATE min=%.6g, median=%.6g, max=%.6g, non-zero=%d/%d",
+                        pc, vals.min(), vals.median(), vals.max(),
+                        (vals != 0).sum(), len(vals),
+                    )
+
             gc.collect()  # Zwischen Modellen: deepcopy-Reste und Fold-Daten freigeben
 
         return models, preds
@@ -1105,9 +1125,9 @@ class AnalysisPipeline:
                         df_out.to_parquet(os.path.join(out_dir, f"predictions_{model_name}.parquet"), index=False)
                     except Exception:
                         self._logger.warning("Parquet-Export fehlgeschlagen, Fallback auf CSV.", exc_info=True)
-                        df_out.to_csv(os.path.join(out_dir, f"predictions_{model_name}.csv"), index=False)
+                        df_out.to_csv(os.path.join(out_dir, f"predictions_{model_name}.csv"), index=False, float_format="%.10g")
                 else:
-                    df_out.to_csv(os.path.join(out_dir, f"predictions_{model_name}.csv"), index=False)
+                    df_out.to_csv(os.path.join(out_dir, f"predictions_{model_name}.csv"), index=False, float_format="%.10g")
 
     # ------------------------------------------------------------------
     # Hauptmethode

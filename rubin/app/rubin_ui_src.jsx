@@ -33,14 +33,14 @@ const pages = [
 ];
 const allModels=["SLearner","TLearner","XLearner","DRLearner","NonParamDML","ParamDML","CausalForestDML"];
 const btOnly=new Set(["SLearner","TLearner","XLearner"]);
-const LGBM={n_estimators:{min:50,max:2000,step:50,type:"int"},learning_rate:{min:0.01,max:0.2,step:0.005,type:"float"},num_leaves:{min:15,max:255,step:1,type:"int"},max_depth:{min:3,max:12,step:1,type:"int"},min_child_samples:{min:5,max:200,step:5,type:"int"},subsample:{min:0.5,max:1,step:0.05,type:"float"},colsample_bytree:{min:0.5,max:1,step:0.05,type:"float"},reg_alpha:{min:0,max:10,step:0.1,type:"float"},reg_lambda:{min:0,max:10,step:0.1,type:"float"}};
-const CB={iterations:{min:100,max:2000,step:50,type:"int"},learning_rate:{min:0.01,max:0.3,step:0.005,type:"float"},depth:{min:4,max:10,step:1,type:"int"},l2_leaf_reg:{min:1,max:20,step:0.5,type:"float"},subsample:{min:0.5,max:1,step:0.05,type:"float"}};
+const LGBM={n_estimators:{min:50,max:600,step:50,type:"int"},learning_rate:{min:0.01,max:0.2,step:0.005,type:"float"},num_leaves:{min:7,max:40,step:1,type:"int"},max_depth:{min:3,max:6,step:1,type:"int"},min_child_samples:{min:5,max:200,step:5,type:"int"},subsample:{min:0.5,max:1,step:0.05,type:"float"},colsample_bytree:{min:0.5,max:1,step:0.05,type:"float"},reg_alpha:{min:0,max:10,step:0.1,type:"float"},reg_lambda:{min:0,max:10,step:0.1,type:"float"}};
+const CB={iterations:{min:50,max:600,step:50,type:"int"},learning_rate:{min:0.01,max:0.3,step:0.005,type:"float"},depth:{min:3,max:6,step:1,type:"int"},l2_leaf_reg:{min:1,max:20,step:0.5,type:"float"},subsample:{min:0.5,max:1,step:0.05,type:"float"}};
 // Default fixed params per base learner (used when tuning is OFF)
-const LGBM_DEFAULTS={n_estimators:500,learning_rate:0.05,num_leaves:31,max_depth:6,min_child_samples:20,subsample:0.8,colsample_bytree:0.8,reg_alpha:0.1,reg_lambda:1.0};
-const CB_DEFAULTS={iterations:500,learning_rate:0.05,depth:6,l2_leaf_reg:3.0,subsample:0.8};
-// Final model (regressor) – konservativere Defaults
-const LGBM_FINAL_DEFAULTS={n_estimators:300,learning_rate:0.03,num_leaves:15,max_depth:5,min_child_samples:30,subsample:0.7,colsample_bytree:0.7,reg_alpha:1.0,reg_lambda:5.0};
-const CB_FINAL_DEFAULTS={iterations:300,learning_rate:0.03,depth:5,l2_leaf_reg:5.0,subsample:0.7};
+const LGBM_DEFAULTS={n_estimators:100,learning_rate:0.1,num_leaves:31,max_depth:-1,min_child_samples:20,subsample:1.0,colsample_bytree:1.0,reg_alpha:0.0,reg_lambda:0.0};
+const CB_DEFAULTS={iterations:100,learning_rate:0.1,depth:6,l2_leaf_reg:3.0,subsample:1.0};
+// Final model (regressor) – konservativere Defaults für CATE-Schätzung
+const LGBM_FINAL_DEFAULTS={n_estimators:100,learning_rate:0.05,num_leaves:15,max_depth:5,min_child_samples:30,subsample:0.8,colsample_bytree:0.8,reg_alpha:0.1,reg_lambda:1.0};
+const CB_FINAL_DEFAULTS={iterations:100,learning_rate:0.05,depth:5,l2_leaf_reg:5.0,subsample:0.8};
 // CausalForestDML forest defaults
 const CF_DEFAULTS={n_estimators:1000,max_depth:null,min_samples_leaf:5,min_samples_split:10,max_features:"auto",max_samples:0.45,min_balancedness_tol:0.45,honest:true,subforest_size:4,n_jobs:-1};
 
@@ -432,6 +432,7 @@ const buildDataPrepYaml = (dp) => {
   a(`  target: ${dp.target||"Y"}`);
   a(`  treatment: ${dp.treatment||"T"}`);
   if(dp.scoreName) a(`  score_name: ${dp.scoreName}`);
+  if(dp.featurePath) a(`  feature_path: "${dp.featurePath}"`);
   a(`  output_path: ${outPath}`);
   a(`  delimiter: "${dp.delimiter||","}"`);
   if(dp.chunksize) a(`  chunksize: ${dp.chunksize}`);
@@ -586,10 +587,10 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
             setDpRunning(false); setDpProgress(0);
             return;
           }
-          setTimeout(poll, 1000);
-        } catch(e) { setTimeout(poll, 2000); }
+          setTimeout(poll, 10000);
+        } catch(e) { setTimeout(poll, 10000); }
       };
-      setTimeout(poll, 500);
+      setTimeout(poll, 2000);
       return;
     } catch(e) {
       setDpError("Backend nicht erreichbar: " + (e.message || "Netzwerkfehler") + ". Prüfe die Verbindung in der Sidebar.");
@@ -741,7 +742,7 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
         <Info>Standardmäßig werden alle Spalten außer T, Y und S als Features verwendet. Du kannst die Features auf zwei Arten einschränken: manuell per Klick oder automatisch per Feature Dictionary.</Info>
         <div style={{display:"flex",gap:2,background:"#f5f0f0",borderRadius:8,padding:3,marginBottom:14}}>
           {["Alle Features","Manuell auswählen","Feature Dictionary"].map(m => (
-            <button key={m} onClick={()=>setFeatureMode(m==="Alle Features"?"alle":m==="Manuell auswählen"?"manuell":"dict")} style={{flex:1,padding:"7px 14px",border:"none",background:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"#fff":"transparent",fontSize:12.5,fontWeight:600,cursor:"pointer",color:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"#9B111E":"#888",borderRadius:6,boxShadow:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"0 1px 4px rgba(0,0,0,0.06)":"none"}}>{m}</button>
+            <button key={m} onClick={()=>{const mode=m==="Alle Features"?"alle":m==="Manuell auswählen"?"manuell":"dict";setFeatureMode(mode);if(mode!=="dict")setDp(prev=>({...prev,featurePath:""}))}} style={{flex:1,padding:"7px 14px",border:"none",background:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"#fff":"transparent",fontSize:12.5,fontWeight:600,cursor:"pointer",color:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"#9B111E":"#888",borderRadius:6,boxShadow:(featureMode==="alle"&&m==="Alle Features")||(featureMode==="manuell"&&m.includes("Manuell"))||(featureMode==="dict"&&m.includes("Dictionary"))?"0 1px 4px rgba(0,0,0,0.06)":"none"}}>{m}</button>
           ))}
         </div>
 
@@ -814,9 +815,28 @@ const PDataPrep = ({dp,setDp,setCfg,setPg}) => {
           <Row>
             <Col><Inp label="Feature Dictionary Pfad" placeholder="data/feature_dictionary.xlsx" value={dp.featurePath} onChange={v=>setDp({...dp,featurePath:v})}/></Col>
             <Col>
-              <div style={{border:"2px dashed #d4b5b8",borderRadius:10,padding:"24px 16px",textAlign:"center",background:"#faf8f8",cursor:"pointer"}}>
+              <div style={{border:"2px dashed #d4b5b8",borderRadius:10,padding:"24px 16px",textAlign:"center",background:"#faf8f8",cursor:"pointer"}}
+                onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.accept=".xlsx,.xls";inp.onchange=async e=>{
+                  const file=e.target.files?.[0];if(!file)return;
+                  const fd=new FormData();fd.append("file",file);
+                  try{const r=await fetch("./api/upload",{method:"POST",body:fd});const d=await r.json();
+                    if(d.status==="done"&&d.path){setDp(prev=>({...prev,featurePath:d.path}))}
+                    else alert("Upload fehlgeschlagen: "+(d.message||""))
+                  }catch(err){alert("Upload fehlgeschlagen: "+(err.message||""))}
+                };inp.click()}}
+                onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor="#9B111E";e.currentTarget.style.background="#fdf2f2"}}
+                onDragLeave={e=>{e.currentTarget.style.borderColor="#d4b5b8";e.currentTarget.style.background="#faf8f8"}}
+                onDrop={async e=>{e.preventDefault();e.currentTarget.style.borderColor="#d4b5b8";e.currentTarget.style.background="#faf8f8";
+                  const file=e.dataTransfer.files?.[0];if(!file)return;
+                  const fd=new FormData();fd.append("file",file);
+                  try{const r=await fetch("./api/upload",{method:"POST",body:fd});const d=await r.json();
+                    if(d.status==="done"&&d.path){setDp(prev=>({...prev,featurePath:d.path}))}
+                    else alert("Upload fehlgeschlagen: "+(d.message||""))
+                  }catch(err){alert("Upload fehlgeschlagen: "+(err.message||""))}
+                }}>
                 <div style={{fontWeight:600,color:"#6B0D15",fontSize:12.5}}>Dictionary hochladen (.xlsx)</div>
                 <div style={{fontSize:10.5,color:"#999"}}>Drag & Drop oder Klick</div>
+                {dp.featurePath && <div style={{fontSize:10.5,color:"#1a7f37",marginTop:6,fontWeight:500}}>✓ {dp.featurePath.split("/").pop()}</div>}
               </div>
             </Col>
           </Row>
@@ -1436,20 +1456,20 @@ const PConfig = ({cfg,set}) => (<>
 // ── Tuning Plan (mirrors tuning_optuna.py logic) ──
 const rolesForModel = m => {
   const n = m.toLowerCase();
-  if(n==="slearner") return [{role:"overall_model",label:"Outcome (mit T als Feature)",sig:"outcome__clf__with_t__all__Y"}];
-  if(n==="tlearner") return [{role:"models",label:"Outcome (pro Gruppe)",sig:"grouped_outcome__clf__no_t__group__Y"}];
+  if(n==="slearner") return [{role:"overall_model",label:"Outcome-Regression (mit T)",sig:"outcome_regression__reg__with_t__all__Y"}];
+  if(n==="tlearner") return [{role:"models",label:"Outcome-Regression (pro Gruppe)",sig:"grouped_outcome_regression__reg__no_t__group__Y"}];
   if(n==="xlearner") return [
-    {role:"models",label:"Outcome (pro Gruppe)",sig:"grouped_outcome__clf__no_t__group__Y"},
+    {role:"models",label:"Outcome-Regression (pro Gruppe)",sig:"grouped_outcome_regression__reg__no_t__group__Y"},
     {role:"cate_models",label:"Pseudo-Effekt (Regressor)",sig:"pseudo_effect__reg__no_t__group__D"},
     {role:"propensity_model",label:"Propensity",sig:"propensity__clf__no_t__all__T"},
   ];
   if(n==="drlearner") return [
     {role:"model_propensity",label:"Propensity",sig:"propensity__clf__no_t__all__T"},
-    {role:"model_regression",label:"Outcome (Regression)",sig:"outcome__clf__no_t__all__Y"},
+    {role:"model_regression",label:"Outcome-Regression",sig:"outcome_regression__reg__no_t__all__Y"},
   ];
   if(["nonparamdml","paramdml","causalforestdml"].includes(n)) return [
-    {role:"model_y",label:"Outcome (model_y)",sig:"outcome__clf__no_t__all__Y"},
-    {role:"model_t",label:"Propensity (model_t)",sig:"propensity__clf__no_t__all__T"},
+    {role:"model_y",label:"Outcome (Classifier)",sig:"outcome__clf__no_t__all__Y"},
+    {role:"model_t",label:"Propensity (Classifier)",sig:"propensity__clf__no_t__all__T"},
   ];
   return [];
 };
@@ -1478,11 +1498,13 @@ const TuningPlanPreview = ({models, perRole, perLearner, trials, cv}) => {
   const totalFits = totalTrials * nCv;
   if(totalStudies === 0) return <Info type="warn">Keine Modelle ausgewählt – kein Tuning nötig.</Info>;
 
-  const sigColors = {"outcome":"#9B111E","propensity":"#D4A853","grouped_outcome":"#6366f1","pseudo_effect":"#1a7f37"};
+  const sigColors = {"outcome":"#9B111E","outcome_regression":"#d97706","propensity":"#D4A853","grouped_outcome":"#6366f1","grouped_outcome_regression":"#7c3aed","pseudo_effect":"#1a7f37"};
   const sigLabel = sig => {
-    if(sig.startsWith("outcome")) return "Outcome";
+    if(sig.startsWith("outcome_regression")) return "Outcome (Regressor)";
+    if(sig.startsWith("outcome")) return "Outcome (Classifier)";
     if(sig.startsWith("propensity")) return "Propensity";
-    if(sig.startsWith("grouped_outcome")) return "Grouped Outcome";
+    if(sig.startsWith("grouped_outcome_regression")) return "Grouped Outcome (Regressor)";
+    if(sig.startsWith("grouped_outcome")) return "Grouped Outcome (Classifier)";
     if(sig.startsWith("pseudo_effect")) return "Pseudo-Effekt";
     return sig;
   };
@@ -1997,6 +2019,33 @@ const PRun = ({cfg,setPg}) => {
 
   useEffect(() => {
     mountedRef.current = true;
+
+    // ── Recovery: Beim App-Start prüfen ob eine Analyse läuft ──
+    // Nützlich nach Browser-Refresh oder wenn App neu geladen wird.
+    (async () => {
+      try {
+        const pr = await fetch("./api/progress");
+        const state = await pr.json();
+        if (state.status === "running" && state.pid) {
+          // Analyse läuft noch → State wiederherstellen + Polling starten
+          setRunning(true); setDone(false); setError(null);
+          if (state.step) setStep(_resolveStepId(state.step));
+          setStepProgress(state.percent || 0);
+          _startPolling();
+        } else if (state.status === "done") {
+          // Analyse war fertig → Ergebnisse laden
+          setDone(true); setRunning(false);
+          try { const r = await fetch("./api/report"); const d = await r.json(); if(d.report_url) setReportUrl(d.report_url); } catch(e) {}
+          try { const r = await fetch("./api/results"); const d = await r.json(); if(d.files) setResultFiles(d.files); } catch(e) {}
+          setShowReport(true);
+          const allIds = STEPS.filter(s => enabledRef.current.has(s.id)).map(s => s.id);
+          setCompleted(new Set(allIds));
+        } else if (state.status === "error" && state.message && state.message !== "run_analysis gestartet...") {
+          setError((state.message || "Analyse fehlgeschlagen") + (state.stderr_tail ? "\n\nDetails:\n" + state.stderr_tail : ""));
+        }
+      } catch(e) { /* Server nicht erreichbar beim Start — OK */ }
+    })();
+
     return () => {
       mountedRef.current = false;
       if(timerRef.current) clearInterval(timerRef.current);
@@ -2016,6 +2065,84 @@ const PRun = ({cfg,setPg}) => {
   }, [running]);
 
   const stopPolling = () => { if(pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
+
+  // ── Step-Name Mapping (shared between startAnalysis + recovery) ──
+  const _stepNameMap = {};
+  STEPS.forEach(s => {
+    _stepNameMap[s.label.toLowerCase()] = s.id;
+    s.label.toLowerCase().split(/[&\s]+/).filter(w=>w.length>3).forEach(w => { _stepNameMap[w] = s.id; });
+  });
+  Object.assign(_stepNameMap, {
+    "daten laden": "load", "loading": "load", "preprocessing": "load",
+    "feature-selektion": "fs", "feature selection": "fs", "feature_selection": "fs",
+    "base-learner-tuning": "tune", "tuning": "tune", "base learner": "tune",
+    "training": "train", "cross-predictions": "train", "cross predictions": "train",
+    "evaluation": "eval", "metriken": "eval", "evaluation & metriken": "eval",
+    "surrogate": "surrogate", "surrogate-tree": "surrogate",
+    "bundle": "bundle", "bundle-export": "bundle", "export": "bundle",
+    "explainability": "explain", "shap": "explain", "permutation": "explain",
+    "report": "report", "html-report": "report",
+  });
+
+  const _resolveStepId = (stepName) => {
+    if (!stepName) return null;
+    const lower = stepName.toLowerCase().trim();
+    if (_stepNameMap[lower]) return _stepNameMap[lower];
+    for (const [key, id] of Object.entries(_stepNameMap)) {
+      if (lower.includes(key) || key.includes(lower)) return id;
+    }
+    return null;
+  };
+
+  // ── Polling-Loop (wiederverwendbar für Start + Recovery) ──
+  const _startPolling = () => {
+    stopPolling();
+    let lastStepIndex = 0;
+    const stepStartTimes = {};
+
+    pollingRef.current = setInterval(async () => {
+      if(!mountedRef.current) { stopPolling(); return; }
+      try {
+        const pr = await fetch("./api/progress");
+        const state = await pr.json();
+        if (state.step && state.step_index > 0) {
+          const stepId = _resolveStepId(state.step) || STEPS[Math.min((state.step_index||1)-1, STEPS.length-1)]?.id;
+          if (stepId) {
+            setStep(stepId);
+            setStepProgress(state.percent || 0);
+            if (state.step_index !== lastStepIndex) {
+              const prevId = stepStartTimes._lastStepId;
+              if(prevId) {
+                setCompleted(prev => { const n = new Set(prev); n.add(prevId); return n; });
+                if(stepStartTimes[prevId]) setStepDurations(prev => ({...prev, [prevId]: (Date.now()-stepStartTimes[prevId])/1000}));
+              }
+              stepStartTimes[stepId] = Date.now();
+              stepStartTimes._lastStepId = stepId;
+              lastStepIndex = state.step_index;
+            }
+          }
+        }
+        if (state.status === "done") {
+          stopPolling();
+          const allIds = STEPS.filter(s => enabledRef.current.has(s.id)).map(s => s.id);
+          setCompleted(new Set(allIds));
+          setStep(null); setStepProgress(0);
+          setRunning(false);
+          try { const repRes = await fetch("./api/report"); const repData = await repRes.json(); if(repData.report_url) setReportUrl(repData.report_url); } catch(e) {}
+          try { const resRes = await fetch("./api/results"); const resData = await resRes.json(); if(resData.files) setResultFiles(resData.files); } catch(e) {}
+          setDone(true); setShowReport(true);
+          return;
+        }
+        if (state.status === "error") {
+          stopPolling();
+          const detail = state.stderr_tail ? "\n\nDetails:\n" + state.stderr_tail : "";
+          setError((state.message || "Analyse fehlgeschlagen") + detail);
+          setRunning(false);
+          return;
+        }
+      } catch(e) { /* Polling-Fehler ignorieren, retry beim nächsten Intervall */ }
+    }, 10000);
+  };
 
   const startAnalysis = async () => {
     timeoutsRef.current.forEach(t => clearTimeout(t));
@@ -2039,98 +2166,8 @@ const PRun = ({cfg,setPg}) => {
         if(mountedRef.current) { setError(startData.message || "Fehler beim Starten"); setRunning(false); }
         return;
       }
-      // Polling: Fortschritt vom Backend abfragen
-      let lastStepIndex = 0;
-      const stepStartTimes = {};
-
-      // Mapping: Backend step_name → Frontend step_id
-      const stepNameMap = {};
-      STEPS.forEach(s => {
-        stepNameMap[s.label.toLowerCase()] = s.id;
-        // Kurzformen die das Backend senden könnte
-        const words = s.label.toLowerCase().split(/[&\s]+/).filter(w=>w.length>3);
-        words.forEach(w => { stepNameMap[w] = s.id; });
-      });
-      // Explizite Mappings für Pipeline-Ausgaben
-      Object.assign(stepNameMap, {
-        "daten laden": "load", "loading": "load", "preprocessing": "load",
-        "feature-selektion": "fs", "feature selection": "fs", "feature_selection": "fs",
-        "base-learner-tuning": "tune", "tuning": "tune", "base learner": "tune",
-        "training": "train", "cross-predictions": "train", "cross predictions": "train",
-        "evaluation": "eval", "metriken": "eval", "evaluation & metriken": "eval",
-        "surrogate": "surrogate", "surrogate-tree": "surrogate",
-        "bundle": "bundle", "bundle-export": "bundle", "export": "bundle",
-        "explainability": "explain", "shap": "explain", "permutation": "explain",
-        "report": "report", "html-report": "report",
-      });
-
-      const resolveStepId = (stepName) => {
-        if (!stepName) return null;
-        const lower = stepName.toLowerCase().trim();
-        // Exakter Match
-        if (stepNameMap[lower]) return stepNameMap[lower];
-        // Teilwort-Match
-        for (const [key, id] of Object.entries(stepNameMap)) {
-          if (lower.includes(key) || key.includes(lower)) return id;
-        }
-        return null;
-      };
-
-      pollingRef.current = setInterval(async () => {
-        if(!mountedRef.current) { stopPolling(); return; }
-        try {
-          const pr = await fetch("./api/progress");
-          const state = await pr.json();
-          // Step-Fortschritt aktualisieren
-          if (state.step && state.step_index > 0) {
-            // Step-Name vom Backend → Frontend step_id (statt Index, da Pipeline Steps überspringen kann)
-            const stepId = resolveStepId(state.step) || STEPS[Math.min((state.step_index||1)-1, STEPS.length-1)]?.id;
-            if (stepId) {
-              setStep(stepId);
-              setStepProgress(state.percent || 0);
-              if (state.step_index !== lastStepIndex) {
-                // Vorherigen Step als abgeschlossen markieren
-                const prevId = stepStartTimes._lastStepId;
-                if(prevId) {
-                  setCompleted(prev => { const n = new Set(prev); n.add(prevId); return n; });
-                  if(stepStartTimes[prevId]) setStepDurations(prev => ({...prev, [prevId]: (Date.now()-stepStartTimes[prevId])/1000}));
-                }
-                stepStartTimes[stepId] = Date.now();
-                stepStartTimes._lastStepId = stepId;
-                lastStepIndex = state.step_index;
-              }
-            }
-          }
-          if (state.status === "done") {
-            stopPolling();
-            // Alle Steps als abgeschlossen markieren
-            const allIds = STEPS.filter(s => enabledRef.current.has(s.id)).map(s => s.id);
-            setCompleted(new Set(allIds));
-            setStep(null); setStepProgress(0);
-            setRunning(false);
-            // Report und Ergebnisse laden
-            try {
-              const repRes = await fetch("./api/report");
-              const repData = await repRes.json();
-              if(repData.report_url) setReportUrl(repData.report_url);
-            } catch(e) {}
-            try {
-              const resRes = await fetch("./api/results");
-              const resData = await resRes.json();
-              if(resData.files) setResultFiles(resData.files);
-            } catch(e) {}
-            setDone(true); setShowReport(true);
-            return;
-          }
-          if (state.status === "error") {
-            stopPolling();
-            const detail = state.stderr_tail ? "\n\nDetails:\n" + state.stderr_tail : "";
-            setError((state.message || "Analyse fehlgeschlagen") + detail);
-            setRunning(false);
-            return;
-          }
-        } catch(e) { /* Polling-Fehler ignorieren, retry beim nächsten Intervall */ }
-      }, 1500);
+      // Polling starten (wiederverwendbare Funktion)
+      _startPolling();
       return;
     } catch(e) {
       if(mountedRef.current) {
@@ -2418,14 +2455,14 @@ export default function App() {
       </nav>
       <main style={{flex:1,maxWidth:960,padding:"36px 52px 80px",margin:"0 auto"}}>
         {pg==="overview" && <POverview setPg={setPg}/>}
-        {pg==="dataprep" && <PDataPrep dp={dp} setDp={setDp} setCfg={set} setPg={setPg}/>}
+        <div style={{display: pg==="dataprep" ? "block" : "none"}}><PDataPrep dp={dp} setDp={setDp} setCfg={set} setPg={setPg}/></div>
         {pg==="data" && <PData cfg={cfg} set={set} setCfg={set} activeBase={activeBase} setActiveBase={setActiveBase} activeAddons={activeAddons} setActiveAddons={setActiveAddons}/>}
         {pg==="config" && <PConfig cfg={cfg} set={set}/>}
         {pg==="models" && <PModels cfg={cfg} set={set} sp={sp} setSp={setSp} spFmt={spFmt} setSpFmt={setSpFmt}/>}
         {pg==="selection" && <PSelection cfg={cfg} set={set}/>}
         {pg==="explain" && <PExplain cfg={cfg} set={set}/>}
         {pg==="preview" && <PPreview cfg={cfg}/>}
-        {pg==="run" && <PRun cfg={cfg} setPg={setPg}/>}
+        <div style={{display: pg==="run" ? "block" : "none"}}><PRun cfg={cfg} setPg={setPg}/></div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",color:"#ccc",fontSize:11,marginTop:60,paddingTop:32,borderTop:`1px solid ${C.borderLight}`,gap:10}}><RubinLogo size={24}/><span>rubin – Causal ML Framework</span></div>
       </main>
     </div>

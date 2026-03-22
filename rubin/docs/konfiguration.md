@@ -146,7 +146,7 @@ data_prep:
   chunksize: 300000
   sas_encoding: "ISO-8859-1"
 
-  feature_path: "/pfad/zum/Feature_Dictionary.xlsx"
+  feature_path: "/pfad/zum/Feature_Dictionary.xlsx"  # Optional: Wenn nicht gesetzt, werden alle Spalten (außer Target/Treatment) als Features verwendet
   info_path: null
 
   target: "TA_HR_ABSCHLUSS_CNT"
@@ -334,9 +334,11 @@ frei wählbar ist (z. B. LightGBM-Regressor).
 **Hinweis zu Binary Treatment / Binary Outcome:**  
 Alle DML-Modelle (`NonParamDML`, `ParamDML`, `CausalForestDML`) sowie `DRLearner` werden in rubin mit
 `discrete_treatment=True` und `discrete_outcome=True` erstellt. Das stellt sicher, dass EconML intern
-die korrekte Cross-Fitting-Logik für binäre Variablen verwendet (Klassifikatoren für Nuisance-Modelle
-statt Regressoren). Für Anwendungen mit kontinuierlichem Treatment oder Outcome müsste die Registry
-entsprechend angepasst werden.
+die korrekte Cross-Fitting-Logik für binäre Variablen verwendet (Klassifikatoren für die Nuisance-Modelle
+`model_y`, `model_t` und `model_propensity`). Die Meta-Learner (`SLearner`, `TLearner`, `XLearner`) sowie
+`DRLearner.model_regression` verwenden hingegen **Regressoren** als Outcome-Modelle, da EconML intern
+`model.predict()` aufruft – ein Classifier gibt dort nur 0/1 (Klassen-Labels) zurück, ein Regressor
+liefert E[Y|X] ∈ [0,1] (kontinuierliche Wahrscheinlichkeit), was für die CATE-Berechnung benötigt wird.
 
 **Hinweis zu fehlenden Werten:**  
 Alle Modelle außer `CausalForestDML` können mit fehlenden Werten in den Features umgehen, da sie

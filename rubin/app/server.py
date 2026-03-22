@@ -366,7 +366,14 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
                 cwd=str(ROOT),
-                env={**os.environ, "PYTHONPATH": str(ROOT)},
+                env={
+                    **os.environ,
+                    "PYTHONPATH": str(ROOT),
+                    # Performance: LightGBM C++ stdout unterdrücken
+                    "LIGHTGBM_VERBOSITY": "-1",
+                    # Optuna-Logging reduzieren (nur Warnungen)
+                    "OPTUNA_VERBOSITY": "WARNING",
+                },
                 start_new_session=True,
             )
             _guarded_set(pid=proc.pid)
@@ -387,12 +394,9 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
             stderr_thread.start()
 
             # PERFORMANCE-OPTIMIERTES Stdout-Lesen:
-            # - select() mit 2s Timeout für Alive-Check
-            # - Batch-Read: Alle verfügbaren Zeilen auf einmal lesen
-            # - Nur [rubin]-Zeilen → Progress-Update (1-2 pro Step)
-            # - stdout_tail: max alle 2 Sekunden aktualisieren
+            # Mit OS-level fd-Redirect kommen nur noch [rubin]-Zeilen an (~10 pro Lauf).
+            # Jede [rubin]-Zeile aktualisiert sofort Step/Percent/Tail.
             stdout_fd = proc.stdout.fileno()
-            _last_tail_update = 0.0
 
             while True:
                 ready, _, _ = select.select([stdout_fd], [], [], 2.0)
@@ -403,11 +407,12 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                     stripped = line.rstrip()
                     stdout_lines.append(stripped)
 
-                    # Nur [rubin]-Zeilen als Progress verarbeiten
+                    # [rubin]-Zeilen: Progress + Tail sofort aktualisieren
                     if "[rubin]" in stripped:
                         _parse_progress(line, stdout_lines, _guarded_set)
+                        _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
 
-                    # Batch: Weitere wartende Zeilen sofort lesen (non-blocking)
+                    # Batch: Weitere wartende Zeilen sofort lesen
                     while True:
                         more, _, _ = select.select([stdout_fd], [], [], 0)
                         if not more:
@@ -419,26 +424,22 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
                         stdout_lines.append(stripped)
                         if "[rubin]" in stripped:
                             _parse_progress(line, stdout_lines, _guarded_set)
+                            _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
 
-                    # stdout_lines begrenzen + tail nur alle 2s updaten
                     if len(stdout_lines) > 100:
                         stdout_lines[:] = stdout_lines[-50:]
-                    now = time.time()
-                    if now - _last_tail_update >= 2.0:
-                        _last_tail_update = now
-                        _guarded_set(stdout_tail="\n".join(stdout_lines[-30:]))
                 else:
+                    # Timeout: Prozess-Check + stderr_tail aktualisieren
                     ret = proc.poll()
                     if ret is not None:
                         log.info("Task %s: Prozess beendet (rc=%d), breche stdout-Read ab.", task_name, ret)
                         break
+                    # Zwischen Steps: stderr_tail aktualisieren (zeigt Logging-Output)
+                    if stderr_lines:
+                        _guarded_set(stderr_tail="\n".join(stderr_lines[-50:]))
 
-            # Alle Kindprozesse der Prozessgruppe beenden
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (OSError, ProcessLookupError):
-                pass
-
+            # Hauptprozess sauber beenden lassen, dann Kindprozesse aufräumen.
+            # NICHT sofort killpg — der Prozess könnte noch MLflow-Cleanup machen.
             try:
                 proc.stdout.close()
             except Exception:
@@ -449,13 +450,30 @@ def _run_in_background(task_name: str, cmd: list[str], timeout: int = 3600):
             except Exception:
                 pass
 
-            rc = proc.poll()
-            if rc is None:
+            # Warte auf den Hauptprozess (max 30s für MLflow-Cleanup etc.)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                log.warning("Task %s: Prozess reagiert nicht nach 30s, sende SIGTERM.", task_name)
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                rc = proc.returncode or -9
+
+            rc = proc.returncode
+            if rc is None:
+                rc = -9
+
+            # Verwaiste Kindprozesse aufräumen (LightGBM Worker etc.)
+            # NACH dem Hauptprozess, damit dessen Exit-Code nicht überschrieben wird.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                pass
 
             if rc == 0:
                 files = _scan_result_files()
@@ -551,7 +569,7 @@ def run_analysis():
     log.info("Analyse-Konfiguration geschrieben: %s", config_path)
 
     python = _find_analysis_python()
-    cmd = [python, str(ROOT / "run_analysis.py"), "--config", str(config_path)]
+    cmd = [python, str(ROOT / "run_analysis.py"), "--quiet", "--config", str(config_path)]
     _run_in_background("run_analysis", cmd)
 
     return jsonify({"status": "started", "message": "Analyse gestartet."})
@@ -572,7 +590,7 @@ def run_dataprep():
     log.info("DataPrep-Konfiguration geschrieben: %s", config_path)
 
     python = _find_analysis_python()
-    cmd = [python, str(ROOT / "run_dataprep.py"), "--config", str(config_path)]
+    cmd = [python, str(ROOT / "run_dataprep.py"), "--quiet", "--config", str(config_path)]
     _run_in_background("run_dataprep", cmd, timeout=1800)
 
     return jsonify({"status": "started", "message": "Datenvorbereitung gestartet."})

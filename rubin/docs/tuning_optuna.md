@@ -10,7 +10,7 @@ Das hat zwei Vorteile:
 ## Wie wird getunt?
 - Optuna schlägt Hyperparameter vor.
 - Es wird eine CV (Cross Validation) mit `cv_splits` durchgeführt. **Empfehlung:** `cv_splits` sollte dem Wert in `data_processing.cross_validation_splits` entsprechen, damit die Trainingsset-Größen zwischen Tuning und finaler Evaluation konsistent bleiben.
-- Als Metrik wird z.B. `roc_auc` (oder eine in der Pipeline unterstützte Metrik) verwendet.
+- Als Metrik wird für **Classifier-Tasks** (Nuisance: `model_y`, `model_t`, Propensity) z.B. `roc_auc` verwendet. Für **Regressor-Tasks** (Meta-Learner Outcome: `overall_model`, `models`, `model_regression`) wird automatisch **neg. MSE** als Metrik genutzt.
 - Bei **Multi-Treatment** wird für die Propensity-Modelle automatisch `roc_auc_ovr` (One-vs-Rest, gewichtet) statt der binären AUC verwendet, da das Propensity-Modell dann eine Multiclass-Klassifikation durchführt (K Treatment-Gruppen). LightGBM und CatBoost erkennen Multiclass automatisch aus den Trainingsdaten.
 
 ### Single-Fold-Tuning
@@ -49,7 +49,9 @@ Das Ergebnis wird in einem JSON-Artefakt gespeichert und beim Modellbau angewend
 
 Einige Verfahren besitzen zusätzlich ein **Final-Modell**, das die heterogenen Effekte lernt
 (z. B. `NonParamDML`, `DRLearner`). Dieses Final-Modell ist typischerweise ein Regressor
-(LightGBM/CatBoost), während die Nuisance-Modelle (Outcome/Propensity) Klassifikatoren sind.
+(LightGBM/CatBoost). Die DML-Nuisance-Modelle (`model_y`, `model_t`, `model_propensity`) sind
+Klassifikatoren, während die Meta-Learner Outcome-Modelle (`overall_model`, `models`,
+`model_regression`) ebenfalls Regressoren sind.
 
 Damit das Final-Modell nicht mit den Nuisance-Modellen vermischt wird, gibt es eine separate
 Konfigsektion:
@@ -111,9 +113,10 @@ tuning:
   n_trials: 50
   search_space:
     lgbm:
-      n_estimators: {type: "int", low: 300, high: 1200}
+      n_estimators: {type: "int", low: 50, high: 600}
       learning_rate: {type: "float", low: 0.01, high: 0.2, log: true}
-      num_leaves: {type: "int", low: 31, high: 255}
+      num_leaves: {type: "int", low: 7, high: 40}
+      max_depth: {type: "int", low: 3, high: 6}
       min_child_samples: {type: "int", low: 10, high: 150}
       min_child_weight: {type: "float", low: 0.001, high: 10.0, log: true}
       subsample: {type: "float", low: 0.6, high: 1.0}
@@ -123,9 +126,9 @@ tuning:
       reg_alpha: {type: "float", low: 0.00000001, high: 10.0, log: true}
       reg_lambda: {type: "float", low: 0.00000001, high: 10.0, log: true}
     catboost:
-      iterations: {type: "int", low: 400, high: 1600}
+      iterations: {type: "int", low: 50, high: 600}
       learning_rate: {type: "float", low: 0.01, high: 0.3, log: true}
-      depth: {type: "int", low: 4, high: 10}
+      depth: {type: "int", low: 3, high: 6}
       l2_leaf_reg: {type: "float", low: 1.0, high: 20.0, log: true}
       random_strength: {type: "float", low: 0.00000001, high: 10.0, log: true}
       bootstrap_type: {type: "categorical", choices: ["Bayesian", "Bernoulli"]}
@@ -141,7 +144,7 @@ final_model_tuning:
   n_trials: 20
   search_space:
     lgbm:
-      n_estimators: {type: "int", low: 200, high: 800}
+      n_estimators: {type: "int", low: 50, high: 400}
       learning_rate: {type: "float", low: 0.01, high: 0.15, log: true}
 ```
 
@@ -167,7 +170,7 @@ Dafür wird aus `models_to_train` zunächst ein interner Trainingsplan abgeleite
 Eine Task wird über folgende Merkmale beschrieben:
 
 - Base-Learner-Familie
-- Objective-Familie (`outcome`, `grouped_outcome`, `propensity`, `pseudo_effect`)
+- Objective-Familie (`outcome`, `outcome_regression`, `grouped_outcome`, `grouped_outcome_regression`, `propensity`, `pseudo_effect`)
 - Estimator-Task (`classifier` oder `regressor`)
 - Sample-Scope (`all`, `group_specific_shared_params`, ...)
 - Nutzung des Treatment-Features
@@ -229,4 +232,9 @@ tuning:
 ### Study-Namen
 Der Study-Name wird aus Prefix + Kontext zusammengesetzt, z. B.:
 
-`baselearner__lgbm__outcome__classifier__all__with_t__y`
+`baselearner__lgbm__outcome_regression__regressor__all__with_t__y`
+
+Weitere typische Study-Namen:
+- `baselearner__lgbm__outcome__classifier__all__no_t__y` (DML model_y)
+- `baselearner__lgbm__propensity__classifier__all__no_t__t` (Propensity, geteilt)
+- `baselearner__lgbm__grouped_outcome_regression__regressor__group_specific_shared_params__no_t__y` (TLearner/XLearner)
