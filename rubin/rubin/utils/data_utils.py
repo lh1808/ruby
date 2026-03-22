@@ -52,6 +52,8 @@ def _random_train_test_split(
     indices = np.arange(len(X))
     train_idx, test_idx = train_test_split(indices, test_size=test_size, random_state=random_state, shuffle=True)
     X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
+    X_train = X_train.reset_index(drop=True)
+    X_test = X_test.reset_index(drop=True)
     T_arr = np.asarray(T)
     Y_arr = np.asarray(Y)
     T_train, T_test = T_arr[train_idx], T_arr[test_idx]
@@ -91,6 +93,9 @@ def stratified_train_test_split(
         return _random_train_test_split(X, T, Y, S, test_size=test_size, random_state=random_state)
 
     X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
+    # Index zurücksetzen: position-basierte Konsistenz mit numpy T/Y Arrays
+    X_train = X_train.reset_index(drop=True)
+    X_test = X_test.reset_index(drop=True)
     T_train, T_test = np.asarray(T)[train_idx], np.asarray(T)[test_idx]
     Y_train, Y_test = np.asarray(Y)[train_idx], np.asarray(Y)[test_idx]
 

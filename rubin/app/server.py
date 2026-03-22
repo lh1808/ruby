@@ -99,13 +99,119 @@ def _get_state():
 
 @app.route("/api/health")
 def health():
-    """Health-Check für Monitoring und Load-Balancer."""
+    """Health-Check mit System-Informationen (RAM, Prozess-Status)."""
     is_domino = bool(os.environ.get("DOMINO_PROJECT_NAME"))
+
+    # RAM-Auslastung — Container-aware (cgroups v1/v2 + /proc/meminfo Fallback)
+    ram = {}
+    try:
+        # 1. Host-RAM aus /proc/meminfo
+        with open("/proc/meminfo") as f:
+            info = {}
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    info[parts[0].rstrip(":")] = int(parts[1])  # kB
+        host_total_kb = info.get("MemTotal", 0)
+        host_avail_kb = info.get("MemAvailable", info.get("MemFree", 0))
+
+        # 2. Container-Limit aus cgroups (überschreibt host_total wenn kleiner)
+        container_limit_kb = host_total_kb
+        for cg_path in [
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroups v1
+            "/sys/fs/cgroup/memory.max",                     # cgroups v2
+        ]:
+            try:
+                with open(cg_path) as cg:
+                    val = cg.read().strip()
+                    if val != "max" and val.isdigit():
+                        limit_kb = int(val) // 1024
+                        # Nur verwenden wenn kleiner als Host-RAM (= echtes Container-Limit)
+                        if 0 < limit_kb < host_total_kb:
+                            container_limit_kb = limit_kb
+                        break
+            except (FileNotFoundError, PermissionError, ValueError):
+                continue
+
+        # 3. Container-Usage aus cgroups (genauer als /proc/meminfo in Containern)
+        container_used_kb = host_total_kb - host_avail_kb  # Fallback
+        for cg_usage_path in [
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",  # cgroups v1
+            "/sys/fs/cgroup/memory.current",                 # cgroups v2
+        ]:
+            try:
+                with open(cg_usage_path) as cg:
+                    val = cg.read().strip()
+                    if val.isdigit():
+                        container_used_kb = int(val) // 1024
+                        break
+            except (FileNotFoundError, PermissionError, ValueError):
+                continue
+
+        total = container_limit_kb
+        used = min(container_used_kb, total)
+        avail = max(0, total - used)
+        ram = {
+            "total_mb": round(total / 1024),
+            "used_mb": round(used / 1024),
+            "available_mb": round(avail / 1024),
+            "percent": round(used / total * 100, 1) if total > 0 else 0,
+        }
+    except Exception:
+        pass
+
+    # Prozess-Status
+    state = _get_state()
+    proc_status = state.get("status", "idle")
+    proc_pid = state.get("pid")
+
+    # Wenn running: prüfe ob Prozess noch lebt
+    if proc_status == "running" and proc_pid:
+        try:
+            os.kill(proc_pid, 0)
+        except (OSError, ProcessLookupError):
+            proc_status = "crashed"
+
     return jsonify({
         "status": "ok",
         "version": __version__,
         "environment": "domino" if is_domino else "standalone",
+        "ram": ram,
+        "process": {
+            "status": proc_status,
+            "pid": proc_pid,
+            "task": state.get("task"),
+            "step": state.get("step", ""),
+            "percent": state.get("percent", 0),
+        },
     })
+
+
+@app.route("/api/restart-process", methods=["POST"])
+def restart_process():
+    """Beendet einen laufenden/abgestürzten Prozess und setzt den State zurück."""
+    state = _get_state()
+    pid = state.get("pid")
+    killed = False
+    if pid:
+        # Versuche Prozessgruppe zu beenden
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            killed = True
+            log.info("Prozess %d (Gruppe) beendet via restart.", pid)
+        except (OSError, ProcessLookupError):
+            pass
+        if not killed:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed = True
+                log.info("Prozess %d beendet via restart.", pid)
+            except (OSError, ProcessLookupError):
+                pass
+    _set_state(status="idle", task=None, message="", step="", step_index=0,
+               total_steps=0, percent=0, stdout_tail="", stderr_tail="",
+               result_files=[], pid=None)
+    return jsonify({"status": "idle", "killed": killed})
 
 
 # ══════════════════════════════════════════════════════

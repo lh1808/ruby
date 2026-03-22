@@ -22,9 +22,12 @@ visuelle Beurteilung der Sortierung genutzt werden."""
 
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple, Union
+import logging
 
 import numpy as np
 import pandas as pd
+
+_logger = logging.getLogger(__name__)
 
 import matplotlib
 matplotlib.use("Agg")  # Headless-Backend für Batch-/Server-Umgebungen
@@ -52,6 +55,11 @@ try:
     _SKLIFT_AVAILABLE = True
 except Exception:
     _SKLIFT_AVAILABLE = False
+    _logger.warning(
+        "scikit-uplift nicht installiert – Qini-Curve, Uplift-by-Percentile und "
+        "Treatment-Balance-Plots werden übersprungen. "
+        "Installation: pip install 'scikit-uplift>=0.5'"
+    )
 
 
 def save_dataframe_as_png(df: pd.DataFrame, filename: str) -> str:
@@ -252,30 +260,36 @@ class DrTesterPlotBundle:
     treatment_balance: Optional[plt.Figure]
 
 
-def evaluate_cate_with_plots(
+def fit_drtester_nuisance(
     *,
     model_regression: Any,
     model_propensity: Any,
     X_val: pd.DataFrame,
     T_val: np.ndarray,
     Y_val: np.ndarray,
-    cate_preds_val: np.ndarray,
     X_train: Optional[pd.DataFrame] = None,
     T_train: Optional[np.ndarray] = None,
     Y_train: Optional[np.ndarray] = None,
-    cate_preds_train: Optional[np.ndarray] = None,
-    n_groups: int = 10,
-) -> DrTesterPlotBundle:
-    """Hauptfunktion: DRTester-Auswertung + sklift-Plots.
-Erwartet explizit die (Cross-)Predictions als Arrays."""
+) -> CustomDRTester:
+    """Erstellt und fittet einen DRTester NUR für die Nuisance-Modelle (Outcome + Propensity).
+
+    Die Nuisance-Ergebnisse (DR-Outcomes, ATE) sind für alle kausalen Modelle gleich
+    und müssen nur einmal berechnet werden. Der zurückgegebene Tester kann dann
+    mit evaluate_cate_with_plots(fitted_tester=...) wiederverwendet werden."""
+
+    # Dummy-CATE-Preds (werden bei der Nuisance-Fitphase nicht benötigt,
+    # aber der Konstruktor verlangt entweder cate oder cate_preds_val)
+    dummy_cate = np.zeros(len(X_val))
 
     tester = CustomDRTester(
         model_regression=model_regression,
         model_propensity=model_propensity,
         cate=None,
-        cate_preds_val=cate_preds_val,
-        cate_preds_train=cate_preds_train,
+        cate_preds_val=dummy_cate,
     )
+    # Referenzen speichern für spätere Nuisance-Wiederverwendung
+    tester._model_regression_ref = model_regression
+    tester._model_propensity_ref = model_propensity
 
     if X_train is not None and T_train is not None and Y_train is not None:
         tester.fit_nuisance(
@@ -293,35 +307,137 @@ Erwartet explizit die (Cross-)Predictions als Arrays."""
             yval=np.asarray(Y_val).ravel(),
         )
 
-    res = tester.evaluate_all(X_val.values, X_train.values if X_train is not None else None, n_groups=n_groups)
-    summary = res.summary()
-    cal_plot = res.plot_cal(1).get_figure()
-    recolor_figure(cal_plot)
-    qini_plot = res.plot_qini(1).get_figure()
-    recolor_figure(qini_plot)
-    toc_plot = res.plot_toc(1).get_figure()
-    recolor_figure(toc_plot)
-    policy_values = res.get_policy_values(1)
+    return tester
 
+
+def evaluate_cate_with_plots(
+    *,
+    model_regression: Any = None,
+    model_propensity: Any = None,
+    X_val: pd.DataFrame,
+    T_val: np.ndarray,
+    Y_val: np.ndarray,
+    cate_preds_val: np.ndarray,
+    X_train: Optional[pd.DataFrame] = None,
+    T_train: Optional[np.ndarray] = None,
+    Y_train: Optional[np.ndarray] = None,
+    cate_preds_train: Optional[np.ndarray] = None,
+    n_groups: int = 10,
+    fitted_tester: Optional[CustomDRTester] = None,
+) -> DrTesterPlotBundle:
+    """Hauptfunktion: DRTester-Auswertung + sklift-Plots.
+
+    Wenn fitted_tester übergeben wird, werden die vorberechneten Nuisance-Ergebnisse
+    (DR-Outcomes) wiederverwendet — das spart das teure Nuisance-CV-Fitting.
+    Nur die CATE-Predictions werden ausgetauscht."""
+
+    if fitted_tester is not None:
+        # Nuisance bereits berechnet → frischen Tester mit gleichen DR-Outcomes erstellen.
+        # KEIN copy.copy (EconML-interner State ist nicht copy-sicher).
+        # Stattdessen: neuer Tester, Nuisance-State manuell injizieren.
+        tester = CustomDRTester(
+            model_regression=getattr(fitted_tester, '_model_regression_ref', None),
+            model_propensity=getattr(fitted_tester, '_model_propensity_ref', None),
+            cate=None,
+            cate_preds_val=cate_preds_val,
+            cate_preds_train=cate_preds_train,
+        )
+        # DR-Outcomes + Nuisance-State aus dem Pre-Fit übernehmen (das teure Ergebnis)
+        tester.dr_val_ = fitted_tester.dr_val_
+        tester.ate_val = fitted_tester.ate_val
+        tester.Dval = fitted_tester.Dval
+        tester.treatments = fitted_tester.treatments
+        tester.n_treat = fitted_tester.n_treat
+        tester.fit_on_train = fitted_tester.fit_on_train
+        if hasattr(fitted_tester, 'dr_train_'):
+            tester.dr_train_ = fitted_tester.dr_train_
+        if hasattr(fitted_tester, 'cate_preds_train_') and fitted_tester.cate_preds_train_ is not None and cate_preds_train is not None:
+            tester.cate_preds_train_ = np.asarray(cate_preds_train).reshape(-1, 1)
+        _logger.debug(
+            "DRTester Nuisance wiederverwendet: dr_val=%s, cate_preds_val=%s (min=%.4g, max=%.4g)",
+            tester.dr_val_.shape, tester.cate_preds_val_.shape,
+            float(np.nanmin(cate_preds_val)), float(np.nanmax(cate_preds_val)),
+        )
+    else:
+        # Fallback: Nuisance komplett neu fitten (wenn kein Pre-Fit vorhanden)
+        if model_regression is None or model_propensity is None:
+            raise ValueError("Entweder fitted_tester oder model_regression + model_propensity muss angegeben werden.")
+        tester = CustomDRTester(
+            model_regression=model_regression,
+            model_propensity=model_propensity,
+            cate=None,
+            cate_preds_val=cate_preds_val,
+            cate_preds_train=cate_preds_train,
+        )
+
+        if X_train is not None and T_train is not None and Y_train is not None:
+            tester.fit_nuisance(
+                Xval=X_val.values,
+                Dval=np.asarray(T_val).ravel(),
+                yval=np.asarray(Y_val).ravel(),
+                Xtrain=X_train.values,
+                Dtrain=np.asarray(T_train).ravel(),
+                ytrain=np.asarray(Y_train).ravel(),
+            )
+        else:
+            tester.fit_nuisance(
+                Xval=X_val.values,
+                Dval=np.asarray(T_val).ravel(),
+                yval=np.asarray(Y_val).ravel(),
+            )
+
+    # ── DRTester-Plots (Calibration, Qini, TOC) ──
+    summary, cal_plot, qini_plot, toc_plot, policy_values = None, None, None, None, None
+    try:
+        res = tester.evaluate_all(X_val.values, X_train.values if X_train is not None else None, n_groups=n_groups)
+        summary = res.summary()
+        cal_plot = res.plot_cal(1).get_figure()
+        recolor_figure(cal_plot)
+        qini_plot = res.plot_qini(1).get_figure()
+        recolor_figure(qini_plot)
+        toc_plot = res.plot_toc(1).get_figure()
+        recolor_figure(toc_plot)
+        policy_values = res.get_policy_values(1)
+    except Exception as e:
+        _logger.warning("DRTester evaluate_all fehlgeschlagen: %s", e, exc_info=True)
+        if summary is None:
+            summary = pd.DataFrame()
+        if policy_values is None:
+            policy_values = pd.DataFrame()
+
+    # ── scikit-uplift Plots (Qini-Curve, Uplift by Percentile, Treatment Balance) ──
     sk_qini = None
     sk_pct = None
     sk_tb = None
     if _SKLIFT_AVAILABLE:
         uplift = np.asarray(cate_preds_val).ravel()
-        fig1, ax1 = plt.subplots()
-        plot_qini_curve(y_true=np.asarray(Y_val).ravel(), uplift=uplift, treatment=np.asarray(T_val).ravel(), perfect=False, ax=ax1)
-        recolor_figure(fig1)
-        sk_qini = fig1
+        y_val_arr = np.asarray(Y_val).ravel()
+        t_val_arr = np.asarray(T_val).ravel()
+        try:
+            fig1, ax1 = plt.subplots()
+            plot_qini_curve(y_true=y_val_arr, uplift=uplift, treatment=t_val_arr, perfect=False, ax=ax1)
+            recolor_figure(fig1)
+            sk_qini = fig1
+        except Exception as e:
+            _logger.warning("sklift Qini-Curve fehlgeschlagen: %s", e)
 
-        fig2, ax2 = plt.subplots()
-        plot_uplift_by_percentile(y_true=np.asarray(Y_val).ravel(), uplift=uplift, treatment=np.asarray(T_val).ravel(), ax=ax2)
-        recolor_figure(fig2)
-        sk_pct = fig2
+        try:
+            fig2, ax2 = plt.subplots()
+            plot_uplift_by_percentile(y_true=y_val_arr, uplift=uplift, treatment=t_val_arr, ax=ax2)
+            recolor_figure(fig2)
+            sk_pct = fig2
+        except Exception as e:
+            _logger.warning("sklift Uplift-by-Percentile fehlgeschlagen: %s", e)
 
-        fig3, ax3 = plt.subplots()
-        plot_treatment_balance_curve(uplift=uplift, treatment=np.asarray(T_val).ravel(), ax=ax3)
-        recolor_figure(fig3)
-        sk_tb = fig3
+        try:
+            fig3, ax3 = plt.subplots()
+            plot_treatment_balance_curve(uplift=uplift, treatment=t_val_arr, ax=ax3)
+            recolor_figure(fig3)
+            sk_tb = fig3
+        except Exception as e:
+            _logger.warning("sklift Treatment-Balance fehlgeschlagen: %s", e)
+    else:
+        pass  # Import-Warning beim Modul-Load reicht
 
     return DrTesterPlotBundle(
         summary=summary,

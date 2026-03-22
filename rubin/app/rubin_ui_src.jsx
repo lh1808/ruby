@@ -2295,6 +2295,7 @@ export default function App() {
   const [spFmt,setSpFmt] = useState({lgbm:{},catboost:{}});
   const [serverOk,setServerOk] = useState(null); // null=checking, true=ok, false=error
   const [serverError,setServerError] = useState("");
+  const [sysInfo,setSysInfo] = useState(null); // {ram:{percent,used_mb,total_mb}, process:{status,pid,step,percent}}
 
   useEffect(() => {
     let mounted = true;
@@ -2303,9 +2304,12 @@ export default function App() {
         const r = await fetch("./api/health");
         if(!r.ok) throw new Error("HTTP " + r.status);
         const d = await r.json();
-        if(mounted) { setServerOk(true); setServerError(""); }
+        if(mounted) {
+          setServerOk(true); setServerError("");
+          if(d.ram || d.process) setSysInfo({ram: d.ram || {}, process: d.process || {}});
+        }
       } catch(e) {
-        if(mounted) { setServerOk(false); setServerError(e.message || "Nicht erreichbar"); }
+        if(mounted) { setServerOk(false); setServerError(e.message || "Nicht erreichbar"); setSysInfo(null); }
       }
     };
     check();
@@ -2445,12 +2449,17 @@ export default function App() {
           </div>
         </div>
         <div style={{fontSize:10,opacity:0.25,textAlign:"center",padding:"10px 0 6px"}}>v1.0</div>
-        <div style={{textAlign:"center",padding:"0 18px 18px"}}>
-          <div style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:10,color:serverOk===true?"rgba(74,222,128,0.7)":serverOk===false?"rgba(255,100,100,0.8)":"rgba(255,255,255,0.3)"}}>
+        <div style={{padding:"0 14px 14px"}}>
+          {/* Server-Verbindung */}
+          <div style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:serverOk===true?"rgba(74,222,128,0.7)":serverOk===false?"rgba(255,100,100,0.8)":"rgba(255,255,255,0.3)",marginBottom:6}}>
             <div style={{width:6,height:6,borderRadius:3,background:serverOk===true?"#4ade80":serverOk===false?"#ff6b6b":"#888"}}/>
-            {serverOk===true?"Server verbunden":serverOk===false?"Server nicht erreichbar":"Prüfe Verbindung..."}
+            {serverOk===true?"Server verbunden":serverOk===false?"Nicht erreichbar":"Prüfe..."}
           </div>
-          {serverOk===false && serverError && <div style={{fontSize:9,color:"rgba(255,100,100,0.5)",marginTop:2}}>{serverError}</div>}
+          {serverOk===false && serverError && <div style={{fontSize:9,color:"rgba(255,100,100,0.5)",marginBottom:6}}>{serverError}</div>}
+          {/* Prozess-Status */}
+          {sysInfo && sysInfo.process && (()=>{const ps=sysInfo.process;const stMap={idle:{c:"rgba(255,255,255,0.3)",bg:"#888",t:"Bereit"},running:{c:"rgba(74,222,128,0.7)",bg:"#4ade80",t:"Läuft"+(ps.step?" – "+ps.step:"")},done:{c:"rgba(74,222,128,0.7)",bg:"#22c55e",t:"Fertig"},error:{c:"rgba(255,100,100,0.8)",bg:"#ff6b6b",t:"Fehler"},crashed:{c:"rgba(255,100,100,0.8)",bg:"#ff6b6b",t:"Abgestürzt"}};const s=stMap[ps.status]||stMap.idle;return(<><div style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:s.c,marginBottom:4}}><div style={{width:6,height:6,borderRadius:3,background:s.bg}}/><span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.t}</span>{ps.pid&&<span style={{opacity:0.4,fontSize:9}}>PID {ps.pid}</span>}</div>{ps.status==="running"&&ps.percent>0&&(<div style={{height:2,background:"rgba(255,255,255,0.1)",borderRadius:1,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:ps.percent+"%",background:"#4ade80",borderRadius:1,transition:"width 0.5s"}}/></div>)}{(ps.status==="error"||ps.status==="crashed")&&(<button onClick={async()=>{try{await fetch("./api/restart-process",{method:"POST"});setSysInfo(p=>p?{...p,process:{...p.process,status:"idle",pid:null}}:p)}catch(e){}}} style={{display:"block",width:"100%",padding:"4px 0",marginBottom:4,background:"rgba(255,100,100,0.15)",border:"1px solid rgba(255,100,100,0.3)",borderRadius:4,color:"rgba(255,100,100,0.8)",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Prozess neu starten</button>)}</>)})()}
+          {/* RAM-Auslastung */}
+          {sysInfo && sysInfo.ram && sysInfo.ram.total_mb>0 && (()=>{const r=sysInfo.ram;const pct=r.percent||0;const barColor=pct>85?"#ff6b6b":pct>70?"#f59e0b":"rgba(74,222,128,0.6)";return(<div style={{marginTop:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"rgba(255,255,255,0.35)",marginBottom:2}}><span>RAM</span><span>{r.used_mb?(r.used_mb/1024).toFixed(1):"?"}/{(r.total_mb/1024).toFixed(1)} GB ({pct}%)</span></div><div style={{height:3,background:"rgba(255,255,255,0.08)",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:2,transition:"width 1s"}}/></div></div>)})()}
         </div>
       </nav>
       <main style={{flex:1,maxWidth:960,padding:"36px 52px 80px",margin:"0 auto"}}>

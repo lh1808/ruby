@@ -922,7 +922,7 @@ persistiert und in weiteren Folds wiederverwendet."""
                 for tr, va in split_iter:
                     est = DRLearner(
                         model_propensity=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_propensity", {})),
-                        model_regression=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_regression", {})),
+                        model_regression=self._build_regressor(base_type, base_fixed_params, tuned_roles.get("model_regression", {})),
                         model_final=self._build_regressor(base_type, base_fixed_params, cand_params),
                         cv=int(self.cfg.final_model_tuning.cv_splits),
                         random_state=self.seed,

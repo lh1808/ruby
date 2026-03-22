@@ -39,6 +39,10 @@ pip = "*"
 setuptools = ">=61"
 setuptools-scm = "*"
 
+# scikit-uplift ist nicht auf conda-forge → als PyPI-Dependency
+[pypi-dependencies]
+scikit-uplift = ">=0.5"
+
 # ── Feature: shap (optional) ──
 [feature.shap.dependencies]
 shap = ">=0.43"

@@ -374,11 +374,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     h += '</div>'
     if ds.get("treatment_distribution"):
         total_n = ds.get("n_rows", 1)
-        h += '<h3>Treatment-Verteilung' + (' (Train)' if is_external else '') + '</h3><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
+        h += '<h3>Treatment-Verteilung' + (' (Train)' if is_external else '') + '</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
         for grp, n in ds["treatment_distribution"].items():
             rate = ds.get("outcome_rates", {}).get(grp, 0)
             h += f'<tr><td>{escape(grp)}</td><td>{n:,}</td><td>{n/total_n*100:.1f}%</td><td>{rate:.4f}</td></tr>'
-        h += '</tbody></table>'
+        h += '</tbody></table></div>'
     # Eval-Daten-Statistiken (nur bei external)
     if is_external and eds:
         h += '<h3>Evaluationsdaten (separater Datensatz)</h3><div class="cg">'
@@ -391,11 +391,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         h += '</div>'
         if eds.get("treatment_distribution"):
             eval_n = eds.get("n_rows", 1)
-            h += '<h3>Treatment-Verteilung (Eval)</h3><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
+            h += '<h3>Treatment-Verteilung (Eval)</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
             for grp, n in eds["treatment_distribution"].items():
                 rate = eds.get("outcome_rates", {}).get(grp, 0)
                 h += f'<tr><td>{escape(grp)}</td><td>{n:,}</td><td>{n/eval_n*100:.1f}%</td><td>{rate:.4f}</td></tr>'
-            h += '</tbody></table>'
+            h += '</tbody></table></div>'
         # Train vs. Eval Vergleich
         if ds.get("outcome_rate_overall") and eds.get("outcome_rate_overall"):
             diff_rate = abs(ds["outcome_rate_overall"] - eds["outcome_rate_overall"])
@@ -457,30 +457,30 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             if total_roles > n_studies:
                 h += f' <strong>{total_roles - n_studies} Tuning-Läufe eingespart.</strong>'
             h += '</p>'
-            h += '<table class="dt"><thead><tr><th>Task</th><th>Rolle</th><th>Geteilt von</th><th>Signatur</th></tr></thead><tbody>'
+            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Task</th><th>Rolle</th><th>Geteilt von</th><th>Signatur</th></tr></thead><tbody>'
             for t in collector.tuning_plan:
                 models_str = ", ".join(t.get("models", []))
                 h += f'<tr><td><code>{escape(t.get("task_key",""))}</code></td>'
                 h += f'<td>{escape(t.get("role",""))}</td>'
                 h += f'<td>{escape(models_str)}</td>'
                 h += f'<td><code style="font-size:11px">{escape(t.get("signature",""))}</code></td></tr>'
-            h += '</tbody></table>'
+            h += '</tbody></table></div>'
 
         # Best scores table
-        h += '<h3>Best Scores pro Task</h3><table class="dt"><thead><tr><th>Task</th><th>Best Score</th></tr></thead><tbody>'
+        h += '<h3>Best Scores pro Task</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Task</th><th>Best Score</th></tr></thead><tbody>'
         for task, score in sorted(collector.tuning_scores.items()):
             h += f'<tr><td><code>{escape(task)}</code></td><td>{score:.6f}</td></tr>'
-        h += '</tbody></table>'
+        h += '</tbody></table></div>'
 
         # Best hyperparameters (if provided)
         if collector.best_params:
             h += '<details class="detail-box"><summary>Gefundene Hyperparameter</summary><div class="detail-content">'
             for task_key, params in sorted(collector.best_params.items()):
                 h += f'<h4 style="margin-top:10px"><code>{escape(task_key)}</code></h4>'
-                h += '<table class="dt" style="width:100%;margin:4px 0 10px"><thead><tr><th>Parameter</th><th>Wert</th></tr></thead><tbody>'
+                h += '<div class="tbl-scroll" style="margin:4px 0 10px"><table class="dt"><thead><tr><th>Parameter</th><th>Wert</th></tr></thead><tbody>'
                 for pk, pv in sorted(params.items()):
                     h += f'<tr><td><code>{escape(pk)}</code></td><td>{escape(str(pv))}</td></tr>'
-                h += '</tbody></table>'
+                h += '</tbody></table></div>'
             h += '</div></details>'
 
         _sec("tuning", "Base-Learner-Tuning", h)
@@ -512,7 +512,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         if collector.fmt_plan:
             total_fmt_fits = sum(r.get("total_fits", 0) for r in collector.fmt_plan)
             h += '<h3>Tuning-Plan pro Modell</h3>'
-            h += '<table class="dt"><thead><tr><th>Modell</th><th>Methode</th><th>Trials</th><th>Fits/Trial</th><th>Total Fits</th></tr></thead><tbody>'
+            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>Methode</th><th>Trials</th><th>Fits/Trial</th><th>Total Fits</th></tr></thead><tbody>'
             for r in collector.fmt_plan:
                 method_badge = ""
                 method = r.get("method", "")
@@ -523,7 +523,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
                 h += f'<td>{r.get("trials",0)}</td>'
                 h += f'<td>{r.get("fits_per_trial",0)}</td>'
                 h += f'<td><strong>{r.get("total_fits",0):,}</strong></td></tr>'
-            h += '</tbody></table>'
+            h += '</tbody></table></div>'
             # Explanation per model
             for r in collector.fmt_plan:
                 if r.get("note"):
@@ -535,20 +535,20 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
 
         # Best R-Scores
         if fmt.get("best_scores"):
-            h += '<h3>Best R-Scores</h3><table class="dt"><thead><tr><th>Modell</th><th>R-Score</th></tr></thead><tbody>'
+            h += '<h3>Best R-Scores</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>R-Score</th></tr></thead><tbody>'
             for model, score in fmt["best_scores"].items():
                 h += f'<tr><td><strong>{escape(model)}</strong></td><td>{score:.6f}</td></tr>'
-            h += '</tbody></table>'
+            h += '</tbody></table></div>'
 
         # Best hyperparameters
         if collector.fmt_best_params:
             h += '<details class="detail-box"><summary>Gefundene Hyperparameter (Final-Modell)</summary><div class="detail-content">'
             for model, params in sorted(collector.fmt_best_params.items()):
                 h += f'<h4 style="margin-top:10px"><strong>{escape(model)}</strong></h4>'
-                h += '<table class="dt" style="width:100%;margin:4px 0 10px"><thead><tr><th>Parameter</th><th>Wert</th></tr></thead><tbody>'
+                h += '<div class="tbl-scroll" style="margin:4px 0 10px"><table class="dt"><thead><tr><th>Parameter</th><th>Wert</th></tr></thead><tbody>'
                 for pk, pv in sorted(params.items()):
                     h += f'<tr><td><code>{escape(pk)}</code></td><td>{escape(str(pv))}</td></tr>'
-                h += '</tbody></table>'
+                h += '</tbody></table></div>'
             h += '</div></details>'
 
         _sec("fmt", "Final-Model-Tuning", h)
@@ -589,7 +589,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
                 else:
                     h += '<td class="na">–</td>'
             h += '</tr>'
-        h += '</tbody></table></div>'
+        h += '</tbody></table></div></div>'
 
         # Ranking mini-bars for selection metric
         sel_vals = [(mn, collector.model_metrics[mn].get(sel_met, 0)) for mn in order if isinstance(collector.model_metrics[mn].get(sel_met), float)]
@@ -655,14 +655,14 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         h += '</div>'
         if si.get("metrics"):
             cm = collector.model_metrics.get(champ, {})
-            h += '<h3>Surrogate vs. Champion</h3><table class="dt"><thead><tr><th>Metrik</th><th>Champion</th><th>Surrogate</th><th>Retention</th></tr></thead><tbody>'
+            h += '<h3>Surrogate vs. Champion</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Metrik</th><th>Champion</th><th>Surrogate</th><th>Retention</th></tr></thead><tbody>'
             for k, v in si["metrics"].items():
                 cv = cm.get(k)
                 ret_pct = v / cv * 100 if isinstance(cv, float) and cv != 0 else 0
                 ret_color = "var(--green)" if ret_pct >= 80 else "var(--gold)" if ret_pct >= 60 else "var(--ruby)"
                 ret_bar = f'<div class="bar-bg" style="width:80px"><div class="bar-fill" style="width:{min(ret_pct,100)}%;background:{ret_color}"></div></div><span class="bar-pct">{ret_pct:.0f}%</span>' if ret_pct > 0 else "–"
                 h += f'<tr><td><code>{escape(k)}</code></td><td>{f"{cv:.6f}" if isinstance(cv, float) else "–"}</td><td>{v:.6f}</td><td>{ret_bar}</td></tr>'
-            h += '</tbody></table>'
+            h += '</tbody></table></div>'
         _sec("surrogate", "Surrogate-Einzelbaum", h)
 
     # ── 9. Explainability ──
@@ -677,14 +677,14 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     if collector.step_durations:
         total = collector.total_elapsed or sum(collector.step_durations.values())
         max_dur = max(collector.step_durations.values()) if collector.step_durations else 0
-        h = '<table class="dt"><thead><tr><th>Schritt</th><th>Dauer</th><th>Anteil</th></tr></thead><tbody>'
+        h = '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Schritt</th><th>Dauer</th><th>Anteil</th></tr></thead><tbody>'
         for step, dur in collector.step_durations.items():
             pct = dur / total * 100 if total > 0 else 0
             is_max = abs(dur - max_dur) < 0.01
             row_cls = ' class="champ-row"' if is_max else ""
             bold_s, bold_e = ("<strong>", "</strong>") if is_max else ("", "")
             h += f'<tr{row_cls}><td>{bold_s}{escape(step)}{bold_e}</td><td>{bold_s}{_fmt_dur(dur)}{bold_e}</td><td><div class="bar-bg"><div class="bar-fill" style="width:{min(pct,100)}%"></div></div><span class="bar-pct">{pct:.1f}%</span></td></tr>'
-        h += '</tbody></table>'
+        h += '</tbody></table></div>'
         if total > 0:
             h += f'<div style="margin-top:10px;font-size:14px;font-weight:600;color:var(--ruby-d)">Gesamt: {_fmt_dur(total)}</div>'
         _sec("timing", "Laufzeiten", h)
@@ -768,7 +768,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .dt td{padding:8px 14px;border-bottom:1px solid var(--border)}
 .dt tbody tr:last-child td{border-bottom:none}
 .dt tbody tr:nth-child(even) td{background:var(--ruby-pale)}
-.dt code{font-size:12px;font-family:var(--mono);background:var(--code-bg);padding:1px 6px;border-radius:4px}
+.dt code{font-size:12px;font-family:var(--mono);background:var(--code-bg);padding:1px 6px;border-radius:4px;word-break:break-all}
 .dt .na{color:var(--text-f)}
 .champ-row td{background:var(--ruby-pale) !important;font-weight:600}
 .badge-c{background:var(--ruby);color:#fff;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700}
@@ -790,8 +790,8 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .rank-fill{height:100%;background:linear-gradient(90deg,var(--ruby),var(--ruby-l));border-radius:5px}
 .rank-bar.champ .rank-fill{background:linear-gradient(90deg,var(--gold),#e8c36a)}
 .rank-val{font-family:var(--mono);font-size:12.5px;color:var(--text-l);width:65px;text-align:right;flex-shrink:0}
-.tbl-scroll{overflow-x:auto;margin:8px 28px 14px}
-.tbl-scroll .dt{width:100%;margin:0}
+.tbl-scroll{overflow-x:auto;margin:8px 28px 14px;-webkit-overflow-scrolling:touch}
+.tbl-scroll .dt{width:100%;margin:0;overflow:visible}
 .bar-bg{display:inline-block;width:120px;height:8px;background:var(--ruby-pale);border-radius:4px;vertical-align:middle;margin-right:8px}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--ruby),var(--ruby-l));border-radius:4px}
 .bar-pct{font-size:12px;color:var(--text-l);font-family:var(--mono)}

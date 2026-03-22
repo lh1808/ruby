@@ -46,6 +46,7 @@ from rubin.tuning_optuna import BaseLearnerTuner, FinalModelTuner, _first_crossf
 from rubin.utils.uplift_metrics import auuc, policy_value, qini_coefficient, uplift_at_k, uplift_curve, mt_eval_summary
 from rubin.evaluation.drtester_plots import (
     evaluate_cate_with_plots,
+    fit_drtester_nuisance,
     plot_custom_qini_curve,
     save_dataframe_as_png,
     policy_value_comparison_plots,
@@ -156,6 +157,11 @@ class AnalysisPipeline:
             X.shape, T.shape, np.unique(T).tolist(), Y.shape, np.unique(Y).tolist(),
             S.shape if S is not None else "None",
         )
+
+        # Defensiv: Index zurücksetzen, damit X.iloc[i] ↔ T[i] ↔ Y[i] ↔ S[i]
+        # garantiert position-konsistent sind (nach sample/holdout wäre X.index nicht-konsekutiv).
+        X = X.reset_index(drop=True)
+
         return X, T, Y, S
 
     # ------------------------------------------------------------------
@@ -234,6 +240,17 @@ class AnalysisPipeline:
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
             for task_key, score in tuner.best_scores.items():
                 mlflow.log_metric(f"tuning_best__{task_key}", score)
+
+            # Beste Parameter auch als MLflow-Params loggen (für schnelle Übersicht)
+            for model_name, roles_dict in tuned_params_by_model.items():
+                for role, params in roles_dict.items():
+                    if isinstance(params, dict):
+                        for pk, pv in params.items():
+                            try:
+                                mlflow.log_param(f"hp__{model_name}__{role}__{pk}", pv)
+                            except Exception:
+                                pass  # MLflow Param-Limit (500 chars) oder Duplikate
+
             # Für HTML-Report sammeln
             if hasattr(self, '_report'):
                 self._report.tuning_scores.update(tuner.best_scores)
@@ -242,9 +259,14 @@ class AnalysisPipeline:
                     plan = tuner._build_plan(cfg.models.models_to_train)
                     plan_list = []
                     for task in sorted(plan.values(), key=tuner._task_priority):
-                        role_label = {"outcome": "Outcome (Y)", "propensity": "Propensity (T)",
-                                      "grouped_outcome": "Outcome (grouped)", "pseudo_effect": "Pseudo-Effekt"
-                                      }.get(task.objective_family, task.objective_family)
+                        role_label = {
+                            "outcome": "Outcome (Classifier)",
+                            "outcome_regression": "Outcome (Regressor)",
+                            "propensity": "Propensity (T)",
+                            "grouped_outcome": "Grouped Outcome (Classifier)",
+                            "grouped_outcome_regression": "Grouped Outcome (Regressor)",
+                            "pseudo_effect": "Pseudo-Effekt",
+                        }.get(task.objective_family, task.objective_family)
                         sig_parts = [cfg.base_learner.type, task.estimator_task, task.sample_scope,
                                      "with_t" if task.uses_treatment_feature else "no_t", task.target_name]
                         plan_list.append({
@@ -329,12 +351,13 @@ class AnalysisPipeline:
                 except Exception:
                     pass
 
-            if tuned_params_by_model:
-                def _write_tuned(p):
-                    with open(p, "w", encoding="utf-8") as fh:
-                        json.dump(tuned_params_by_model, fh, ensure_ascii=False, indent=2)
+        # Tuned-Parameter-Artifact IMMER schreiben (nicht nur bei FMT)
+        if tuned_params_by_model:
+            def _write_tuned(p):
+                with open(p, "w", encoding="utf-8") as fh:
+                    json.dump(tuned_params_by_model, fh, ensure_ascii=False, indent=2)
 
-                _log_temp_artifact(mlflow, _write_tuned, "tuned_baselearner_params.json")
+            _log_temp_artifact(mlflow, _write_tuned, "tuned_baselearner_params.json")
 
         return tuned_params_by_model
 
@@ -455,17 +478,102 @@ class AnalysisPipeline:
         policy_values_dict: Dict[str, pd.DataFrame] = {}
         is_mt = is_multi_treatment(T)
 
+        # ── DRTester Nuisance EINMAL fitten (für alle Modelle gleich) ──
+        # Beste Classifier-Params finden: DML model_y/model_t bevorzugt,
+        # dann DRLearner model_propensity, dann base_learner.fixed_params
+        _best_clf_params_y = dict(cfg.base_learner.fixed_params or {})
+        _best_clf_params_t = dict(cfg.base_learner.fixed_params or {})
+        for mname in ["NonParamDML", "ParamDML", "CausalForestDML", "DRLearner"]:
+            roles = tuned_params_by_model.get(mname, {})
+            if roles.get("model_y"):
+                _best_clf_params_y = {**_best_clf_params_y, **roles["model_y"]}
+                break
+        for mname in ["NonParamDML", "ParamDML", "CausalForestDML", "DRLearner"]:
+            roles = tuned_params_by_model.get(mname, {})
+            if roles.get("model_t") or roles.get("model_propensity"):
+                _best_clf_params_t = {**_best_clf_params_t, **(roles.get("model_t") or roles.get("model_propensity") or {})}
+                break
+
+        fitted_tester_bt = None  # Pre-fitted DRTester für BT
+        fitted_tester_mt = {}    # Pre-fitted DRTester pro Arm für MT
+        try:
+            model_reg = build_base_learner(cfg.base_learner.type, _best_clf_params_y, seed=cfg.constants.random_seed, task="classifier")
+            model_prop = build_base_learner(cfg.base_learner.type, _best_clf_params_t, seed=cfg.constants.random_seed, task="classifier")
+
+            X_val = holdout_data[0] if holdout_data is not None else X
+            T_val = holdout_data[1] if holdout_data is not None else T
+            Y_val = holdout_data[2] if holdout_data is not None else Y
+
+            # Prüfe ob Train-Preds vorhanden (für irgendein Modell)
+            has_train = any(
+                any(c.startswith("Train_") and not np.all(np.isnan(dfp[c].to_numpy(dtype=float)))
+                    for c in dfp.columns if c.startswith("Train_"))
+                for dfp in preds.values()
+            )
+
+            if not is_mt:
+                fitted_tester_bt = fit_drtester_nuisance(
+                    model_regression=model_reg,
+                    model_propensity=model_prop,
+                    X_val=X_val, T_val=T_val, Y_val=Y_val,
+                    X_train=X if has_train else None,
+                    T_train=T if has_train else None,
+                    Y_train=Y if has_train else None,
+                )
+                self._logger.info("DRTester Nuisance einmalig gefittet (BT). Wird für alle Modelle wiederverwendet.")
+            else:
+                # MT: Pro Arm einen binären DRTester fitten (Control vs. Arm k)
+                K = len(np.unique(T_val))
+                for arm in range(1, K):
+                    arm_mask_val = (T_val == 0) | (T_val == arm)
+                    arm_X_val = X_val.loc[X_val.index[arm_mask_val]].copy() if isinstance(X_val, pd.DataFrame) else X_val[arm_mask_val]
+                    arm_T_val = (T_val[arm_mask_val] == arm).astype(int)
+                    arm_Y_val = Y_val[arm_mask_val]
+
+                    arm_X_train, arm_T_train, arm_Y_train = None, None, None
+                    if has_train:
+                        arm_mask_tr = (T == 0) | (T == arm)
+                        arm_X_train = X.iloc[np.where(arm_mask_tr)[0]].copy()
+                        arm_T_train = (T[arm_mask_tr] == arm).astype(int)
+                        arm_Y_train = Y[arm_mask_tr]
+
+                    fitted_tester_mt[arm] = fit_drtester_nuisance(
+                        model_regression=build_base_learner(cfg.base_learner.type, _best_clf_params_y, seed=cfg.constants.random_seed, task="classifier"),
+                        model_propensity=build_base_learner(cfg.base_learner.type, _best_clf_params_t, seed=cfg.constants.random_seed, task="classifier"),
+                        X_val=arm_X_val, T_val=arm_T_val, Y_val=arm_Y_val,
+                        X_train=arm_X_train, T_train=arm_T_train, Y_train=arm_Y_train,
+                    )
+                self._logger.info("DRTester Nuisance einmalig gefittet (MT, %d Arme). Wird für alle Modelle wiederverwendet.", K - 1)
+        except Exception:
+            self._logger.warning("DRTester Nuisance Pre-Fit fehlgeschlagen. Fallback auf Per-Modell-Fit.", exc_info=True)
+
         for mname, dfp in preds.items():
             y = dfp["Y"].to_numpy()
             t = dfp["T"].to_numpy()
+
+            # Diagnose: CATE-Verteilung pro Modell loggen (vor Evaluation)
+            pred_cols = [c for c in dfp.columns if c.startswith(f"Predictions_{mname}")]
+            for pc in pred_cols:
+                vals = dfp[pc].dropna()
+                if len(vals) > 0:
+                    self._logger.info(
+                        "Evaluation %s: n=%d, min=%.6g, median=%.6g, max=%.6g, "
+                        "std=%.6g, non-zero=%d/%d, unique=%.0f",
+                        pc, len(vals), vals.min(), vals.median(), vals.max(),
+                        vals.std(), (vals != 0).sum(), len(vals),
+                        min(vals.nunique(), 999),
+                    )
+
             if is_mt:
                 eval_summary, policy_values_dict = self._evaluate_mt(
                     cfg, X, T, Y, holdout_data, mname, dfp, y, t,
-                    tuned_params_by_model, eval_summary, policy_values_dict, mlflow)
+                    tuned_params_by_model, eval_summary, policy_values_dict, mlflow,
+                    fitted_testers=fitted_tester_mt)
             else:
                 eval_summary, policy_values_dict = self._evaluate_bt(
                     cfg, X, T, Y, holdout_data, mname, dfp, y, t,
-                    tuned_params_by_model, eval_summary, policy_values_dict, mlflow)
+                    tuned_params_by_model, eval_summary, policy_values_dict, mlflow,
+                    fitted_tester=fitted_tester_bt)
 
         # Historischer Score (nur BT)
         hist_score_eval = S
@@ -488,7 +596,7 @@ class AnalysisPipeline:
 
         return eval_summary, policy_values_dict
 
-    def _evaluate_bt(self, cfg, X, T, Y, holdout_data, mname, dfp, y, t, tuned_params_by_model, eval_summary, policy_values_dict, mlflow):
+    def _evaluate_bt(self, cfg, X, T, Y, holdout_data, mname, dfp, y, t, tuned_params_by_model, eval_summary, policy_values_dict, mlflow, fitted_tester=None):
         """Binary-Treatment-Evaluation für ein einzelnes Modell."""
         pred_col = f"Predictions_{mname}"
         if pred_col not in dfp.columns:
@@ -509,19 +617,12 @@ class AnalysisPipeline:
             mlflow.log_metric(f"{short}__{mname}", val)
 
         try:
-            tuned_roles = tuned_params_by_model.get(mname, {})
-            params_y = {**(cfg.base_learner.fixed_params or {}), **(tuned_roles.get("model_y") or tuned_roles.get("default") or {})}
-            params_t = {**(cfg.base_learner.fixed_params or {}), **(tuned_roles.get("model_t") or tuned_roles.get("default") or {})}
-            model_reg = build_base_learner(cfg.base_learner.type, params_y, seed=cfg.constants.random_seed, task="classifier")
-            model_prop = build_base_learner(cfg.base_learner.type, params_t, seed=cfg.constants.random_seed, task="classifier")
-
             train_col = f"Train_{mname}"
             cate_train = None
             if train_col in dfp.columns and not np.all(np.isnan(dfp[train_col].to_numpy(dtype=float))):
                 cate_train = dfp[train_col].to_numpy(dtype=float)
 
             bundle = evaluate_cate_with_plots(
-                model_regression=model_reg, model_propensity=model_prop,
                 X_val=(holdout_data[0] if holdout_data is not None else X),
                 T_val=(holdout_data[1] if holdout_data is not None else T),
                 Y_val=(holdout_data[2] if holdout_data is not None else Y),
@@ -530,6 +631,7 @@ class AnalysisPipeline:
                 T_train=T if cate_train is not None else None,
                 Y_train=Y if cate_train is not None else None,
                 cate_preds_train=cate_train, n_groups=10,
+                fitted_tester=fitted_tester,
             )
             policy_values_dict[mname] = bundle.policy_values
             _log_temp_artifact(mlflow, lambda p, _b=bundle: save_dataframe_as_png(_b.summary, p), f"summary__{mname}.png")
@@ -556,15 +658,13 @@ class AnalysisPipeline:
 
         return eval_summary, policy_values_dict
 
-    def _evaluate_mt(self, cfg, X, T, Y, holdout_data, mname, dfp, y, t, tuned_params_by_model, eval_summary, policy_values_dict, mlflow):
+    def _evaluate_mt(self, cfg, X, T, Y, holdout_data, mname, dfp, y, t, tuned_params_by_model, eval_summary, policy_values_dict, mlflow, fitted_testers=None):
         """Multi-Treatment-Evaluation für ein einzelnes Modell."""
         mt_pred_cols = [c for c in dfp.columns if c.startswith(f"Predictions_{mname}_T")]
         if not mt_pred_cols:
             return eval_summary, policy_values_dict
 
         scores_2d = dfp[mt_pred_cols].to_numpy()
-        # propensity=None → empirische Verteilung (korrekt bei Randomisierung/A-B-Test).
-        # Bei observationalen Daten kann hier eine geschätzte Propensity übergeben werden.
         eval_summary[mname] = mt_eval_summary(y=y, t=t, scores_2d=scores_2d, propensity=None)
 
         for key, val in eval_summary[mname].items():
@@ -575,12 +675,6 @@ class AnalysisPipeline:
                     mlflow.log_metric(f"{key}_{sub_key}__{mname}", float(sub_val))
 
         try:
-            tuned_roles = tuned_params_by_model.get(mname, {})
-            params_y = {**(cfg.base_learner.fixed_params or {}), **(tuned_roles.get("model_y") or tuned_roles.get("default") or {})}
-            params_t = {**(cfg.base_learner.fixed_params or {}), **(tuned_roles.get("model_t") or tuned_roles.get("default") or {})}
-            model_reg = build_base_learner(cfg.base_learner.type, params_y, seed=cfg.constants.random_seed, task="classifier")
-            model_prop = build_base_learner(cfg.base_learner.type, params_t, seed=cfg.constants.random_seed, task="classifier")
-
             n_effects = scores_2d.shape[1]
             for k in range(n_effects):
                 arm = k + 1
@@ -604,11 +698,13 @@ class AnalysisPipeline:
                         arm_T_train = (T[train_mask] == arm).astype(int)
                         arm_Y_train = Y[train_mask]
 
+                    # Pre-fitted DRTester für diesen Arm verwenden (wenn vorhanden)
+                    arm_tester = (fitted_testers or {}).get(arm)
                     bundle = evaluate_cate_with_plots(
-                        model_regression=model_reg, model_propensity=model_prop,
                         X_val=arm_X, T_val=arm_T, Y_val=arm_Y, cate_preds_val=arm_cate,
                         X_train=arm_X_train, T_train=arm_T_train, Y_train=arm_Y_train,
                         cate_preds_train=cate_train, n_groups=10,
+                        fitted_tester=arm_tester,
                     )
                     policy_values_dict[f"{mname}_T{arm}"] = bundle.policy_values
                     _log_temp_artifact(mlflow, lambda p, _b=bundle: save_dataframe_as_png(_b.summary, p), f"summary__{mname}_T{arm}.png")
