@@ -1,8 +1,3 @@
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/sklearn/utils/validation.py:2739: UserWarning: X does not have valid feature names, but LGBMRegressor was fitted with feature names
-  warnings.warn(
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/sklearn/utils/validation.py:2739: UserWarning: X does not have valid feature names, but LGBMRegressor was fitted with feature names
-  warnings.warn(
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/sklearn/utils/validation.py:2739: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
-  warnings.warn(
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/sklearn/utils/validation.py:2739: UserWarning: X does not have valid feature names, but LGBMRegressor was fitted with feature names
-  warnings.warn(
+scikit-uplift Import fehlgeschlagen: cannot import name 'check_matplotlib_support' from 'sklearn.utils' (/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/sklearn/utils/__init__.py) – Qini-Curve, Uplift-by-Percentile und Treatment-Balance-Plots werden übersprungen. Installation: pip install 'scikit-uplift>=0.5' (alle Dependencies sind bereits über conda installiert).
+/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/tracking/_tracking_service/utils.py:184: FutureWarning: The filesystem tracking backend (e.g., './mlruns') is deprecated as of February 2026. Consider transitioning to a database backend (e.g., 'sqlite:///mlflow.db') to take advantage of the latest MLflow features. See https://mlflow.org/docs/latest/self-hosting/migrate-from-file-store for migration guidance.
+  return FileStore(store_uri, store_uri)
